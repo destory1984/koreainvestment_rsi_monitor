@@ -34,7 +34,8 @@ REARM_MARGIN = 7.0
 ALERT_COOLDOWN_SEC = 600
 
 # ── 목소리 ─────────────────────────────────────────────────────
-TTS_LOCAL_URL = "http://127.0.0.1:47650/tts"
+# 로컬 TTS 서버. 없으면 윈도우 음성(SAPI)으로 읽는다. 다른 곳에 띄웠으면 환경변수 KIS_TTS_URL 로 준다.
+TTS_LOCAL_URL = os.environ.get("KIS_TTS_URL", "http://127.0.0.1:47650/tts")
 TTS_LOCAL_SPEAKER = "Sohee"
 TTS_LOCAL_SEED = 42
 TTS_LOCAL_TIMEOUT = 60        # 첫 문장은 모델이 깨느라 오래 걸릴 수 있다
@@ -43,8 +44,9 @@ TTS_TRIM_LEVEL = 0.01         # 이보다 작은 소리는 빈 자리로 본다
 TTS_TRIM_KEEP = 0.06          # 잘라낸 뒤 앞뒤에 남길 초
 TTS_VOICE = "Heami"           # SAPI 로 물러날 때 고를 목소리
 TTS_RATE = 6
-TTS_GREETING = "전하. 옥체 강녕하시옵니까. 그럼 모니터링 시작하겠사옵니다."
-TTS_GREETING_AGAIN = "전하. 모니터링 시작하겠사옵니다."
+# 시작 인사. kis_settings.json 의 "greeting" / "greeting_again" 으로 바꾼다 (빈 문자열이면 인사 없음)
+TTS_GREETING = "모니터링을 시작합니다."
+TTS_GREETING_AGAIN = "모니터링을 다시 시작합니다."
 
 CHIME_WAV = r"C:\Windows\Media\Speech On.wav"
 BEEP_TONES = {"short": ((1175, 90),), "full": ((880, 180), (1175, 180), (880, 180))}
@@ -273,7 +275,7 @@ class Voice:
             raise RuntimeError(f"로컬 TTS HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:200]}") from None
         except urllib.error.URLError as e:
             raise RuntimeError(f"로컬 TTS 서버에 닿지 않는다 ({TTS_LOCAL_URL}) — "
-                               f"sh /c/_c/rsi/start_tts 로 띄울 것. {e.reason}") from None
+                               f"윈도우 음성으로 읽는다. {e.reason}") from None
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".wav.part")
         tmp.write_bytes(trim_wav(data))
@@ -289,6 +291,9 @@ class Voice:
 
     def prefetch(self, texts, on_done=None):
         """없는 문장을 뒤에서 미리 만든다. 서버가 없으면 그냥 둔다(울릴 때 SAPI 로 읽힌다)."""
+        if not self.server_up():
+            return False
+
         def run():
             missing = [t for t in dict.fromkeys(texts) if not self.cached(t)]
             made = 0
@@ -302,6 +307,7 @@ class Voice:
             if on_done:
                 on_done(made, len(missing))
         threading.Thread(target=run, daemon=True).start()
+        return True
 
     # 읽기
     def say(self, text, tone=""):
@@ -356,15 +362,19 @@ class Voice:
             self.last_error += f" / 파워셸: {e}"
             return ""
 
-    def greet(self):
+    def greet(self, first_text=None, again_text=None):
         """시작 인사. 그날 처음이면 긴 인사, 같은 날 다시 켜면 짧은 인사."""
+        first_text = TTS_GREETING if first_text is None else first_text
+        again_text = TTS_GREETING_AGAIN if again_text is None else again_text
         mark = self.dir / "greeted_kis.txt"
         today = datetime.now().strftime("%Y-%m-%d")
         try:
             first = mark.read_text(encoding="utf-8").strip() != today
         except Exception:
             first = True
-        self.say(TTS_GREETING if first else TTS_GREETING_AGAIN)
+        text = first_text if first else again_text
+        if text:
+            self.say(text)
         if first:
             try:
                 self.dir.mkdir(parents=True, exist_ok=True)

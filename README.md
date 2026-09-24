@@ -4,8 +4,12 @@
 
 <sub>Live RSI and MACD for US and Korean stocks, computed from Korea Investment & Securities (KIS) Open API minute bars and trade feed. Korean UI.</sub>
 
-- **1단계 (지금)** — 분봉과 실시간 체결가로 RSI·MACD 를 계산해서 보여준다.
-- **2단계** — [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_monitor) 처럼 선을 넘으면 소리·텔레그램으로 알린다.
+- **1단계 (됨)** — 분봉과 실시간 체결가로 RSI·MACD 를 계산해서 웹 화면에 보여준다.
+- **2단계** — [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_monitor) 처럼 선을 넘으면 알린다.
+  소리(TTS)는 됐고, 텔레그램은 아직이다.
+
+**각자 자기 PC 에서, 자기 한국투자증권 키로 돌리는 프로그램이다.** 누군가 띄워 둔 사이트에 들어가는 방식이 아니다.
+왜 그런지는 [인터넷에 띄우지 않는 이유](#인터넷에-띄우지-않는-이유)에 적었다.
 
 ---
 
@@ -15,30 +19,59 @@
 미국 정규장·프리장·애프터장 실시간 체결가를 **무료로** 받을 수 있다. 분봉도 같은 키로 받는다.
 전에는 Webull 화면을 캡처해서 RSI 숫자를 읽었는데, 이제 숫자를 직접 계산한다.
 
-## 필요한 것
+## 시작하기
 
-- Python 3.11+
-- 한국투자증권 계좌와 [KIS Developers](https://apiportal.koreainvestment.com/) 에서 받은 앱키·시크릿
-- 해외주식 시세를 쓰려면 한국투자증권 앱에서 해외주식 거래 신청이 되어 있어야 한다
+### 1. 한국투자증권 키 받기
 
-```bash
-pip install requests websockets rich
-pip install fastapi "uvicorn[standard]"   # 웹 화면을 쓸 때
-```
+1. 한국투자증권 계좌를 만든다. 미국 주식을 보려면 한국투자증권 앱에서 **해외주식 거래 신청**도 해 둔다.
+2. [KIS Developers](https://apiportal.koreainvestment.com/) 에 들어가 Open API 서비스를 신청하고
+   **실전투자** 앱키(App Key)와 시크릿(App Secret)을 받는다. 이 프로그램은 실전투자 주소로만 붙는다.
 
-## 키 넣기
+### 2. 받아서 설치하기
 
-환경변수로 넣는다.
+Windows 에 Python 3.11 이상이 있어야 한다.
 
 ```bash
-export KIS_APPKEY=앱키 KIS_APPSECRET=시크릿
+git clone https://github.com/destory1984/koreainvestment_rsi_monitor.git
+cd koreainvestment_rsi_monitor
+pip install -r requirements.txt
 ```
 
-아니면 같은 폴더에 `kis_config.json` 을 만든다. 이 파일은 `.gitignore` 에 들어 있다.
+### 3. 키 넣기
 
-```json
-{"appkey": "앱키", "appsecret": "시크릿"}
+```bash
+python kis_rsi.py setup
 ```
+
+앱키와 시크릿을 물어본다. 토큰을 한 번 받아 보고 맞으면 이 폴더의 `kis_config.json` 에 적는다.
+이 파일은 `.gitignore` 에 들어 있어 저장소에 올라가지 않는다. 환경변수 `KIS_APPKEY`, `KIS_APPSECRET` 로 줘도 된다.
+
+### 4. 띄우기
+
+```bash
+python kis_web.py TSLA SOXL 005930
+```
+
+브라우저가 저절로 http://localhost:8000 을 연다. 다음부터는 종목 없이 `python kis_web.py` 만 하면
+저장된 목록으로 뜬다.
+
+## 인터넷에 띄우지 않는 이유
+
+이 화면을 서버 하나에 띄워 두고 여러 사람이 들어와 보게 할 수도 있다. 기술로는 어렵지 않다.
+그래도 그렇게 하지 않고 각자 자기 키로 돌리게 했다. 이유는 셋이다.
+
+1. **남에게 시세를 보여 주면 안 된다.** 한국투자증권 Open API 는 계좌 주인이 자기 투자에 쓰라고 주는 것이다.
+   받은 시세를 다른 사람에게 보여 주는 건 약관으로 막혀 있을 가능성이 높다. 거래소(나스닥·NYSE·KRX)의
+   실시간 시세를 남에게 보여 주려면 원래 따로 돈을 내고 재배포 계약을 맺어야 한다. 몇 사람만 보는
+   작은 사이트라도 마찬가지다.
+2. **키 하나로는 여러 사람을 감당할 수 없다.** 실시간 연결은 앱키 하나에 하나뿐이고, 그 연결에 종목을
+   41개까지만 넣을 수 있다. 여러 사람이 붙으면 모두 같은 종목 목록을 나눠 봐야 하고, 한 사람이 종목을
+   빼면 다른 사람 화면에서도 빠진다.
+3. **소리 알림은 서버 PC 에서 난다.** 알림은 서버가 판정해서 그 PC 스피커로 읽는다. 다른 사람 브라우저에서
+   울리게 하려면 따로 만들어야 하고, 브라우저는 소리를 쉽게 막는다(탭이 뒤로 가거나 휴대폰 화면이 꺼질 때).
+
+각자 자기 키로 돌리면 이 셋이 다 풀린다. 시세는 자기 것이고, 연결과 종목 수도 각자 따로고, 소리는 자기 PC 에서 난다.
+같은 집 안에서 휴대폰으로 보는 것은 `--host 0.0.0.0` 으로 된다(아래 참고).
 
 ## 쓰는 법
 
@@ -60,10 +93,14 @@ RSI·MACD 가 나온다. 표에서 종목을 누르면 차트가 바뀐다. 값�
   닫아도 울린다. 한 번 울리면 선에서 7 만큼 되돌아오기 전에는, 그리고 10분 안에는 같은 알림을 다시 내지 않는다.
   규칙과 목소리는 [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_monitor) 와 같다 (`kis_alert.py`).
   위의 🔊 로 끄고 켜고, 「시험」으로 한 번 들어 본다. 울린 것과 억제된 것은 표 아래 「알림」에 쌓인다.
-- **목소리** — 이 PC 의 로컬 TTS 서버(Qwen3-TTS 1.7B, 화자 Sohee, `127.0.0.1:47650`)에서 문장을 받아
-  `tts_cache/` 에 쌓는다. 서버를 켤 때와 종목을 더할 때 모자란 문장을 미리 만든다. TTS 서버가 없으면
-  윈도우 음성(SAPI)으로 읽는다. 캐시 파일 이름이 webull_rsi_monitor 와 같은 규칙이라
-  `--tts-cache` 로 그쪽 `tts_cache` 를 주면 만들어 둔 소리를 같이 쓴다.
+  소리는 Windows 에서만 난다.
+- **목소리** — 따로 준비한 게 없으면 윈도우에 들어 있는 음성(SAPI)으로 읽는다. 이것만으로도 알림은 된다.
+  더 자연스러운 목소리를 원하면 로컬 TTS 서버(Qwen3-TTS 1.7B, 화자 Sohee)를 `127.0.0.1:47650` 에 띄워 둔다.
+  그러면 서버를 켤 때와 종목을 더할 때 알림 문장을 미리 만들어 `tts_cache/` 에 쌓고, 그 뒤로는 파일만 튼다.
+  서버 주소가 다르면 환경변수 `KIS_TTS_URL` 로 준다. 이 서버는 GPU(VRAM 8GB 남짓)가 있어야 돈다.
+  캐시 파일 이름이 webull_rsi_monitor 와 같은 규칙이라, `--tts-cache` 로 그쪽 `tts_cache` 를 주면 만들어 둔 소리를 같이 쓴다.
+- **시작 인사** — 켤 때 「모니터링을 시작합니다」라고 한다. `kis_settings.json` 에
+  `{"greeting": "...", "greeting_again": "..."}` 로 바꾸고, 빈 문자열이면 인사하지 않는다.
 - **RSI 옆 ▲▼** — 앞 봉이 닫힐 때의 RSI 보다 0.05 넘게 오르면 ▲, 내리면 ▼ 다.
 
 - 서버 하나가 한국투자증권 실시간 연결을 잡고 브라우저 여러 개에 나눠 준다. 탭을 여러 개 열어도 된다.

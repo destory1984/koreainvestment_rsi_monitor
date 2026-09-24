@@ -64,20 +64,25 @@ class Hub:
             except Exception as e:
                 print(f"{t}: 건너뜀 — {e}", flush=True)
         self.save()
+        if not self.voice.server_up():
+            print(f"로컬 TTS 서버({al.TTS_LOCAL_URL})가 없다 — 알림은 윈도우 음성으로 읽는다.", flush=True)
         if self.settings["sound"]:
-            self.voice.greet()
+            self.voice.greet(*self.greetings())
         self.prefetch(list(self.books.values()))
 
+    def greetings(self):
+        return (self.settings.get("greeting", al.TTS_GREETING),
+                self.settings.get("greeting_again", al.TTS_GREETING_AGAIN))
+
     def prefetch(self, books):
-        texts = [al.TTS_GREETING, al.TTS_GREETING_AGAIN]
+        texts = [t for t in self.greetings() if t]
         for b in books:
             texts += al.phrases(b.name, b.symb)
         missing = sum(not self.voice.cached(t) for t in texts)
-        if missing:
-            print(f"알림 문장 {missing}개를 로컬 TTS 로 만드는 중", flush=True)
-            self.voice.prefetch(texts, lambda made, n: print(
+        if missing and self.voice.prefetch(texts, lambda made, n: print(
                 f"알림 문장 {made}/{n}개 만듦" + ("" if made == n else f" — {self.voice.last_error}"),
-                flush=True))
+                flush=True)):
+            print(f"알림 문장 {missing}개를 로컬 TTS 로 만드는 중", flush=True)
 
     def _add(self, ticker):
         """종목을 찾아 분봉을 받는다 (블로킹). 이미 있으면 그 종목을 돌려준다."""
@@ -326,7 +331,7 @@ def api_sound(on: bool = Body(..., embed=True)):
 def api_sound_test(symb: str = Body("", embed=True)):
     """소리 시험. 그 종목의 65 초과 문장을 말머리와 함께 읽는다."""
     b = hub.books.get(symb.upper()) or next(iter(hub.books.values()), None)
-    text = al.say_breach(b.name, b.symb, True, al.UPPER) if b else al.TTS_GREETING_AGAIN
+    text = al.say_breach(b.name, b.symb, True, al.UPPER) if b else "소리 시험"
     hub.voice.say(text, "short")
     return {"text": text, "server": hub.voice.server_up(), "cached": hub.voice.cached(text)}
 
@@ -354,10 +359,17 @@ def main():
                    help="소리 파일을 쌓는 곳. rsi 의 tts_cache 를 주면 거기 만들어 둔 소리를 같이 쓴다")
     p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 이면 같은 공유기의 다른 기기에서도 열린다")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--no-browser", action="store_true", help="브라우저를 열지 않는다")
     args = p.parse_args()
     hub = Hub(args.tickers, args.min, args.period, args.tts_cache)
+    import threading
     import uvicorn
-    print(f"http://{'localhost' if args.host == '127.0.0.1' else args.host}:{args.port}", flush=True)
+    import webbrowser
+    k.load_keys()  # 키가 없으면 여기서 안내하고 끝낸다
+    url = f"http://localhost:{args.port}"
+    print(url, flush=True)
+    if not args.no_browser:
+        threading.Timer(2.0, webbrowser.open, (url,)).start()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

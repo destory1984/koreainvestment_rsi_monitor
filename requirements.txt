@@ -1,0 +1,7 @@
+requests
+websockets
+rich
+fastapi
+uvicorn[standard]
+numpy
+pywin32; sys_platform == "win32"

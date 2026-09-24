@@ -57,8 +57,27 @@ def load_keys():
     appkey = os.environ.get("KIS_APPKEY") or cfg.get("appkey")
     secret = os.environ.get("KIS_APPSECRET") or cfg.get("appsecret")
     if not appkey or not secret:
-        sys.exit(f"앱키가 없다. {CONFIG.name} 에 appkey/appsecret 을 적거나 환경변수를 설정할 것.")
+        sys.exit("한국투자증권 앱키가 없다. 먼저  python kis_rsi.py setup  으로 넣을 것.\n"
+                 "(환경변수 KIS_APPKEY / KIS_APPSECRET 로 줘도 된다)")
     return appkey, secret
+
+
+def cmd_setup(args):
+    """앱키·시크릿을 물어 kis_config.json 에 적고, 토큰을 받아 맞는 키인지 본다."""
+    from getpass import getpass
+    print("KIS Developers(https://apiportal.koreainvestment.com) 에서 받은 실전투자 앱키를 넣는다.")
+    print(f"키는 이 폴더의 {CONFIG.name} 에만 적힌다 (저장소에는 올라가지 않는다).\n")
+    appkey = input("앱키(App Key): ").strip()
+    secret = getpass("시크릿(App Secret, 화면에 안 보임): ").strip()
+    if not appkey or not secret:
+        sys.exit("비어 있다. 다시 할 것.")
+    try:
+        TOKEN_CACHE.unlink(missing_ok=True)
+        get_token(appkey, secret)
+    except Exception as e:
+        sys.exit(f"토큰을 받지 못했다 — 키가 맞는지, 실전투자 키인지 볼 것.\n{e}")
+    CONFIG.write_text(json.dumps({"appkey": appkey, "appsecret": secret}), encoding="utf-8")
+    print(f"\n됐다. {CONFIG.name} 에 적었다. 이제  python kis_web.py TSLA  로 띄운다.")
 
 
 def get_token(appkey, secret):
@@ -454,6 +473,8 @@ def cmd_watch(args):
 def main():
     p = argparse.ArgumentParser(description="한국투자증권 API 미국주식 분봉·실시간")
     sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("setup", help="앱키·시크릿 넣기 (처음 한 번)")
+    s.set_defaults(func=cmd_setup)
     b = sub.add_parser("bars", help="분봉 조회")
     b.add_argument("tickers", nargs="+")
     b.add_argument("--min", type=int, default=5, help="분 단위 (기본 5)")
