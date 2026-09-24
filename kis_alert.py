@@ -8,8 +8,10 @@
   재무장  한 번 울리면 선에서 7 만큼 되돌아와야(65 알림이면 58 아래) 다시 울린다
   쿨다운  재무장이 되어도 같은 종류는 10분 안에 다시 울리지 않는다
 
-목소리는 이 PC 의 로컬 TTS 서버(Qwen3-TTS 1.7B, 화자 Sohee, 127.0.0.1:47650)에서 받아
-tts_cache/ 에 쌓고 그 뒤로는 파일만 튼다. 서버가 없으면 윈도우 SAPI → 파워셸 음성으로 물러난다.
+목소리는 있는 것 가운데 가장 좋은 것을 쓴다. 한 번 만든 문장은 tts_cache/ 에 쌓고 그 뒤로는 파일만 튼다.
+  1) 로컬 TTS 서버 (Qwen3-TTS 1.7B, 화자 Sohee, 127.0.0.1:47650) — GPU 가 있어 띄워 둔 사람만
+  2) Edge 음성 (ko-KR-SunHiNeural) — 인터넷만 있으면 된다. 키도 돈도 필요 없다
+  3) 윈도우 음성 (SAPI) → 파워셸 음성 — 아무것도 없을 때
 캐시 파일 이름은 rsi_monitor.py 와 같은 규칙이라, 그쪽 tts_cache 를 가리키면 만들어 둔 소리를 같이 쓴다.
 """
 import hashlib
@@ -42,8 +44,11 @@ TTS_LOCAL_TIMEOUT = 60        # 첫 문장은 모델이 깨느라 오래 걸릴 
 TTS_LOCAL_EMOTION = (("시작", "기쁘고 활기찬 목소리로, 또렷하게 말해 주세요."),)
 TTS_TRIM_LEVEL = 0.01         # 이보다 작은 소리는 빈 자리로 본다
 TTS_TRIM_KEEP = 0.06          # 잘라낸 뒤 앞뒤에 남길 초
+TTS_EDGE_VOICE = "ko-KR-SunHiNeural"
 TTS_VOICE = "Heami"           # SAPI 로 물러날 때 고를 목소리
-TTS_RATE = 6
+TTS_RATE = 6                  # -10 ~ 10. Edge 는 한 칸이 5%, SAPI 는 그대로
+TTS_PITCH = 0                 # Edge 음높이, 한 칸이 5Hz
+TTS_VOLUME = 0                # Edge 크기, 한 칸이 5%
 # 시작 인사. kis_settings.json 의 "greeting" / "greeting_again" 으로 바꾼다 (빈 문자열이면 인사 없음)
 TTS_GREETING = "모니터링을 시작합니다."
 TTS_GREETING_AGAIN = "모니터링을 다시 시작합니다."
@@ -206,13 +211,14 @@ def _mci(cmd):
 
 
 def play_wav(path):
-    """끝까지 틀고 돌아온다 (알림은 한 줄로 세워 하나씩 트니 기다려도 된다)."""
+    """wav·mp3 를 끝까지 틀고 돌아온다 (알림은 한 줄로 세워 하나씩 트니 기다려도 된다)."""
     alias = "kistts"
     try:
         _mci(f"close {alias}")
     except Exception:
         pass
-    _mci(f'open "{os.path.abspath(path)}" type waveaudio alias {alias}')
+    kind = "waveaudio" if str(path).lower().endswith(".wav") else "mpegvideo"
+    _mci(f'open "{os.path.abspath(path)}" type {kind} alias {alias}')
     _mci(f"play {alias} wait")
     try:
         _mci(f"close {alias}")
@@ -249,21 +255,68 @@ class Voice:
         threading.Thread(target=self._worker, daemon=True).start()
 
     # 캐시 — rsi_monitor.tts_path 와 같은 열쇠
-    def path(self, text, lang="ko"):
-        sig = f"local|{TTS_LOCAL_SPEAKER}|{TTS_LOCAL_SEED}|{_instruct(text)}"
-        sig += f"|trim{TTS_TRIM_LEVEL}:{TTS_TRIM_KEEP}"
+    def path(self, text, engine="local", lang="ko"):
+        if engine == "local":
+            sig = f"local|{TTS_LOCAL_SPEAKER}|{TTS_LOCAL_SEED}|{_instruct(text)}"
+            sig += f"|trim{TTS_TRIM_LEVEL}:{TTS_TRIM_KEEP}"
+            ext = "wav"
+        else:
+            sig, ext = f"edge|{TTS_EDGE_VOICE}|{TTS_RATE}|{TTS_PITCH}|{TTS_VOLUME}", "mp3"
         key = hashlib.blake2b(f"{lang}|{sig}|{text}".encode("utf-8"), digest_size=8).hexdigest()
-        return self.dir / f"{lang}_{key}.wav"
+        return self.dir / f"{lang}_{key}.{ext}"
+
+    def cached_path(self, text):
+        """만들어 둔 파일. 로컬 목소리를 앞세운다. 없으면 None."""
+        for engine in ("local", "edge"):
+            p = self.path(text, engine)
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        return None
 
     def cached(self, text):
-        p = self.path(text)
-        return p.is_file() and p.stat().st_size > 0
+        return self.cached_path(text) is not None
+
+    @staticmethod
+    def edge_ok():
+        try:
+            import edge_tts  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def engine(self):
+        """지금 새 문장을 만들 통로. 'local' / 'edge' / '' (못 만듦 → 윈도우 음성)."""
+        return "local" if self.server_up() else "edge" if self.edge_ok() else ""
 
     def make(self, text):
-        """로컬 서버에서 받아 캐시에 둔다. 받다 끊긴 파일이 남지 않게 임시 이름으로 받는다."""
-        p = self.path(text)
-        if self.cached(text):
+        """캐시에 있으면 그것, 없으면 로컬 → Edge 순서로 만들어 둔다."""
+        p = self.cached_path(text)
+        if p:
             return p
+        errors = []
+        for engine, save in (("local", self._local_save), ("edge", self._edge_save)):
+            p = self.path(text, engine)
+            tmp = p.with_name(p.name + ".part")   # 받다 끊긴 파일이 캐시에 남지 않게
+            try:
+                self.dir.mkdir(parents=True, exist_ok=True)
+                save(text, tmp)
+                if not tmp.is_file() or tmp.stat().st_size == 0:
+                    raise RuntimeError("받은 소리가 비었다")
+                os.replace(tmp, p)
+                return p
+            except Exception as e:
+                tmp.unlink(missing_ok=True)
+                errors.append(f"{engine}: {e}")
+        raise RuntimeError(" / ".join(errors))
+
+    def _edge_save(self, text, tmp):
+        import asyncio
+        import edge_tts
+        c = edge_tts.Communicate(text, TTS_EDGE_VOICE, rate=f"{TTS_RATE * 5:+d}%",
+                                 pitch=f"{TTS_PITCH * 5:+d}Hz", volume=f"{TTS_VOLUME * 5:+d}%")
+        asyncio.run(c.save(str(tmp)))
+
+    def _local_save(self, text, tmp):
         body = {"text": text, "speaker": TTS_LOCAL_SPEAKER, "seed": TTS_LOCAL_SEED,
                 "instruct": _instruct(text)}
         req = urllib.request.Request(TTS_LOCAL_URL, data=json.dumps(body).encode("utf-8"),
@@ -274,13 +327,8 @@ class Voice:
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"로컬 TTS HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:200]}") from None
         except urllib.error.URLError as e:
-            raise RuntimeError(f"로컬 TTS 서버에 닿지 않는다 ({TTS_LOCAL_URL}) — "
-                               f"윈도우 음성으로 읽는다. {e.reason}") from None
-        self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".wav.part")
+            raise RuntimeError(f"로컬 TTS 서버에 닿지 않는다 ({TTS_LOCAL_URL})") from None
         tmp.write_bytes(trim_wav(data))
-        os.replace(tmp, p)
-        return p
 
     def server_up(self):
         try:
@@ -290,8 +338,8 @@ class Voice:
             return False
 
     def prefetch(self, texts, on_done=None):
-        """없는 문장을 뒤에서 미리 만든다. 서버가 없으면 그냥 둔다(울릴 때 SAPI 로 읽힌다)."""
-        if not self.server_up():
+        """없는 문장을 뒤에서 미리 만든다. 만들 통로가 없으면 그냥 둔다(울릴 때 윈도우 음성으로 읽힌다)."""
+        if not self.engine():
             return False
 
         def run():
@@ -326,9 +374,11 @@ class Voice:
                 self.last_error = str(e)
 
     def _speak(self, text):
+        self.last_error = ""
         try:
-            play_wav(self.make(text))
-            return "local"
+            p = self.make(text)
+            play_wav(p)
+            return "edge" if p.suffix == ".mp3" else "local"
         except Exception as e:
             self.last_error = str(e)
         try:

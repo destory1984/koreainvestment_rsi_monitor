@@ -28,6 +28,8 @@ HERE = Path(__file__).parent
 STATIC = HERE / "static"
 WATCHLIST = HERE / "kis_watchlist.json"
 SETTINGS = HERE / "kis_settings.json"
+ALERT_LOG = HERE / "kis_alerts.jsonl"   # 알림 기록. 한 줄에 하나, 서버를 다시 켜도 남는다
+HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
 
 
@@ -36,7 +38,8 @@ class Hub:
         self.tickers, self.nmin, self.period = tickers, nmin, period
         self.books = {}
         self.gates = {}           # 종목 -> 알림 상태
-        self.events = deque(maxlen=30)
+        self.sup_seen = set()     # 이미 적은 억제 (종목, 종류, 까닭). 실제로 울리면 지운다
+        self.events = deque(self.read_log(), maxlen=HISTORY)   # 최근 것이 앞
         self.voice = al.Voice(tts_cache)
         try:
             self.settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
@@ -64,8 +67,10 @@ class Hub:
             except Exception as e:
                 print(f"{t}: 건너뜀 — {e}", flush=True)
         self.save()
-        if not self.voice.server_up():
-            print(f"로컬 TTS 서버({al.TTS_LOCAL_URL})가 없다 — 알림은 윈도우 음성으로 읽는다.", flush=True)
+        eng = self.voice.engine()
+        print("알림 목소리: " + {"local": "로컬 TTS (Qwen3-TTS)",
+                                 "edge": "Edge 음성 (인터넷, 로컬 TTS 서버는 없음)"}.get(
+            eng, "윈도우 음성 (로컬 TTS 서버도 edge-tts 도 없음)"), flush=True)
         if self.settings["sound"]:
             self.voice.greet(*self.greetings())
         self.prefetch(list(self.books.values()))
@@ -82,7 +87,7 @@ class Hub:
         if missing and self.voice.prefetch(texts, lambda made, n: print(
                 f"알림 문장 {made}/{n}개 만듦" + ("" if made == n else f" — {self.voice.last_error}"),
                 flush=True)):
-            print(f"알림 문장 {missing}개를 로컬 TTS 로 만드는 중", flush=True)
+            print(f"알림 문장 {missing}개를 만드는 중", flush=True)
 
     def _add(self, ticker):
         """종목을 찾아 분봉을 받는다 (블로킹). 이미 있으면 그 종목을 돌려준다."""
@@ -172,6 +177,24 @@ class Hub:
                 await asyncio.sleep(5)
 
     # ── 알림 ──────────────────────────────────────────────────
+    @staticmethod
+    def read_log():
+        try:
+            lines = ALERT_LOG.read_text(encoding="utf-8").splitlines()[-HISTORY:]
+        except FileNotFoundError:
+            return []
+        out = []
+        for ln in reversed(lines):
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                pass
+        return out
+
+    def last_alert(self, symb):
+        """그 종목에서 마지막으로 실제로 울린 알림 (억제된 것은 빼고)."""
+        return next((e for e in self.events if e["symb"] == symb and not e["suppressed"]), None)
+
     def check_alerts(self, symbs):
         for s in symbs:
             b, g = self.books.get(s), self.gates.get(s)
@@ -183,13 +206,26 @@ class Hub:
             a = g.check(v)
             if not a:
                 continue
+            # 선 언저리에서 오르내리면 0.5초마다 억제가 나온다. 같은 까닭의 억제는 한 번만 적는다
+            sup = a.get("suppressed", "")
+            if sup:
+                key = (s, a["kind"], "재무장" if "재무장" in sup else "쿨다운")
+                if key in self.sup_seen:
+                    continue
+                self.sup_seen.add(key)
+            else:
+                self.sup_seen = {x for x in self.sup_seen if x[:2] != (s, a["kind"])}
             said = al.say_breach(b.name, b.symb, a["zone"] == "above", a["edge"])
-            ev = {"t": datetime.now().strftime("%H:%M:%S"), "symb": s, "name": b.name,
+            now = datetime.now()
+            ev = {"ts": now.timestamp(), "d": now.strftime("%m-%d"), "t": now.strftime("%H:%M:%S"),
+                  "bar": epoch(b.bars[-1]["time_us"]), "symb": s, "name": b.name,
                   "rsi": v, "zone": a["zone"], "strength": a["strength"],
                   "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
                           + (" (시작 때부터)" if a["start"] else ""),
                   "suppressed": a.get("suppressed", "")}
             self.events.appendleft(ev)
+            with ALERT_LOG.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             print(f"{ev['t']} 알림 {b.name} {ev['text']} RSI {v:.2f}"
                   + (f" — 억제 ({ev['suppressed']})" if ev["suppressed"] else ""), flush=True)
             if not ev["suppressed"] and self.settings["sound"]:
@@ -200,7 +236,7 @@ class Hub:
 
     def set_sound(self, on):
         self.settings["sound"] = bool(on)
-        SETTINGS.write_text(json.dumps(self.settings), encoding="utf-8")
+        SETTINGS.write_text(json.dumps(self.settings, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # ── 브라우저 쪽 ───────────────────────────────────────────
     def set_status(self, s):
@@ -211,8 +247,12 @@ class Hub:
     def row(self, b):
         ind = b.indicators(self.period)
         bar = b.bars[-1] if b.bars else None
+        g = self.gates.get(b.symb)
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
                 "time": b.us_time, **ind,
+                "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
+                "rearm": bool(g and not all(g.armed.values())),
+                "last_alert": self.last_alert(b.symb),
                 "bar": bar and {"time": epoch(bar["time_us"]), "open": bar["open"],
                                 "high": bar["high"], "low": bar["low"], "close": bar["close"]}}
 
@@ -333,7 +373,7 @@ def api_sound_test(symb: str = Body("", embed=True)):
     b = hub.books.get(symb.upper()) or next(iter(hub.books.values()), None)
     text = al.say_breach(b.name, b.symb, True, al.UPPER) if b else "소리 시험"
     hub.voice.say(text, "short")
-    return {"text": text, "server": hub.voice.server_up(), "cached": hub.voice.cached(text)}
+    return {"text": text, "engine": hub.voice.engine(), "cached": hub.voice.cached(text)}
 
 
 @app.websocket("/ws")
