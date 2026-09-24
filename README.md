@@ -1,8 +1,11 @@
-# KIS US Quotes
+# KoreaInvestment RSI Monitor
 
-**한국투자증권 Open API 로 미국주식 분봉과 실시간 체결가를 받아온다.**
+**한국투자증권 Open API 로 미국주식 분봉과 실시간 체결가를 받아서, RSI 와 MACD 를 실시간으로 보여준다.**
 
-<sub>Pulls US stock minute bars and live trades from the Korea Investment & Securities (KIS) Open API. Korean UI.</sub>
+<sub>Live RSI and MACD for US stocks, computed from Korea Investment & Securities (KIS) Open API minute bars and trade feed. Korean UI.</sub>
+
+- **1단계 (지금)** — 분봉과 실시간 체결가로 RSI·MACD 를 계산해서 보여준다.
+- **2단계** — [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_monitor) 처럼 선을 넘으면 소리·텔레그램으로 알린다.
 
 ---
 
@@ -10,6 +13,7 @@
 
 미국주식 실시간 시세를 따로 사려면 비싸다. 한국투자증권 계좌가 있으면 Open API 로
 미국 정규장·프리장·애프터장 실시간 체결가를 **무료로** 받을 수 있다. 분봉도 같은 키로 받는다.
+전에는 Webull 화면을 캡처해서 RSI 숫자를 읽었는데, 이제 숫자를 직접 계산한다.
 
 ## 필요한 것
 
@@ -64,28 +68,52 @@ python kis_us.py live TSLA SOXL FCEL
 한국 낮 시간의 주간거래는 `--prefix R` 로 받는다. 이때는 거래소 코드가 `BAQ`(나스닥),
 `BAY`(뉴욕), `BAA`(아멕스) 라서 `BAQ:TSLA` 처럼 적어야 한다.
 
-### RSI
+### RSI · MACD 표
 
 ```bash
-python kis_us.py rsi TSLA SOXL             # 5분봉 RSI(14) 를 실시간으로
-python kis_us.py rsi TSLA --once           # 분봉 RSI 만 보고 끝내기
+python kis_us.py watch TSLA SOXL MU
+```
+
+종목마다 한 줄씩 표를 띄워 두고 체결이 올 때마다 고친다. RSI 가 30 이하면 파랗게, 70 이상이면
+빨갛게 칠한다 (`--lower`, `--upper` 로 바꾼다). MACD 히스토그램은 양수면 초록, 음수면 빨강이다.
+
+```
+┌──────┬───────────┬──────┬───────┬─────────┬─────────┬─────────┬──────────┐
+│ 종목 │      가격 │ 등락 │   RSI │    MACD │  시그널 │  히스토 │ 미국시각 │
+├──────┼───────────┼──────┼───────┼─────────┼─────────┼─────────┼──────────┤
+│ TSLA │  379.5600 │-0.13%│ 50.26 │ -0.1509 │ -0.1020 │ -0.0489 │ 15:20:13 │
+│ SOXL │  145.9265 │+0.02%│ 59.68 │ +0.6265 │ +0.5696 │ +0.0569 │ 15:20:13 │
+└──────┴───────────┴──────┴───────┴─────────┴─────────┴─────────┴──────────┘
+```
+
+Git Bash 에서 표가 깨지면 `winpty python kis_us.py watch ...` 로 실행한다.
+
+### RSI · MACD 줄 단위
+
+```bash
+python kis_us.py rsi TSLA SOXL             # 바뀔 때마다 한 줄씩
+python kis_us.py rsi TSLA --once           # 분봉 값만 보고 끝내기
 python kis_us.py rsi TSLA --min 1 --period 9
 ```
 
-분봉 120개로 RSI 를 잡아 두고, 체결이 올 때마다 진행 중인 봉의 종가를 바꿔서 다시 계산한다.
-시간이 다음 봉으로 넘어가면 새 봉을 붙인다. RSI 가 0.1 이상 바뀔 때만 찍는다 (`--step` 으로 바꾼다).
+RSI 가 0.1 이상 바뀌거나 MACD 히스토그램 부호가 바뀔 때만 찍는다 (`--step` 으로 바꾼다).
 
-```
-04:09:42  TSLA     378.6303  RSI  42.19  (미국 150948)
-04:09:43  SOXL     145.2568  RSI  56.89  (미국 150949)
-```
+### 어떻게 계산하나
 
-계산은 Webull 등 대부분의 차트와 같은 와일더 방식이다. 처음 14개는 오른 폭·내린 폭을 산술평균하고,
-그 뒤로는 `(앞 평균 × 13 + 이번 값) / 14` 로 이어 간다. 프리장 봉도 들어가니,
-차트에서 연장 거래 시간을 켜 둔 것과 견줘야 값이 맞는다.
+분봉 120개로 값을 잡아 두고, 체결이 올 때마다 진행 중인 봉의 종가를 바꿔서 다시 계산한다.
+시간이 다음 봉으로 넘어가면 새 봉을 붙인다.
+
+- **RSI** — Webull 등 대부분의 차트와 같은 와일더 방식이다. 처음 14개는 오른 폭·내린 폭을
+  산술평균하고, 그 뒤로는 `(앞 평균 × 13 + 이번 값) / 14` 로 이어 간다.
+- **MACD** — 12·26 봉 지수이동평균의 차이가 MACD 선, 그 9봉 지수이동평균이 시그널,
+  둘의 차이가 히스토그램이다. Webull 은 히스토그램을 두 배로 그리기도 하는데 부호는 같다.
+
+프리장 봉도 들어가니, 차트에서 연장 거래 시간을 켜 둔 것과 견줘야 값이 맞는다.
 
 ## 알아둘 것
 
+- **실시간 연결은 앱키 하나에 하나뿐이다.** `watch` 를 켜 둔 채 다른 창에서 `live` 나 `rsi` 를 켜면
+  `ALREADY IN USE appkey` 로 거절된다. 종목은 한 연결에 여러 개 넣으면 된다.
 - **거래소는 알아서 찾는다.** 종목만 적으면 나스닥 → 뉴욕 → 아멕스 순서로 찾아보고
   `kis_exchange.json` 에 적어 둔다. 한 번 찾은 종목은 다시 찾지 않는다.
 - **접근토큰은 24시간 쓴다.** 새 토큰은 1분에 한 번만 받을 수 있어서 `kis_token.json` 에

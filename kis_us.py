@@ -3,7 +3,8 @@
     python kis_us.py bars TSLA              # 5분봉 (오늘+전일, 최근 120개)
     python kis_us.py bars NYS:BE --min 1    # 거래소를 직접 적을 수도 있다
     python kis_us.py live TSLA SOXL         # 실시간 체결가 (Ctrl+C 로 끝)
-    python kis_us.py rsi TSLA SOXL          # 5분봉 RSI(14) 를 실시간으로
+    python kis_us.py rsi TSLA SOXL          # 5분봉 RSI(14)·MACD 를 실시간으로 (줄 단위)
+    python kis_us.py watch TSLA SOXL        # 같은 것을 표 하나로
 
 키는 kis_config.json (저장소에 안 올라감) 이나 환경변수 KIS_APPKEY / KIS_APPSECRET 에 둔다.
     {"appkey": "...", "appsecret": "..."}
@@ -177,6 +178,9 @@ async def live(approval_key, keys, on_tick=print_tick):
                 await ws.send(msg)
             else:
                 body = j.get("body", {})
+                if "ALREADY IN USE" in (body.get("msg1") or ""):
+                    raise SystemExit("이 앱키로 실시간 연결이 이미 열려 있다. 앱키 하나에 연결은 하나뿐이니 "
+                                     "다른 창의 kis_us.py 를 끄고 다시 할 것.")
                 print(f"[{j['header'].get('tr_key')}] {body.get('msg1')}", flush=True)
 
 
@@ -193,51 +197,147 @@ def cmd_live(args):
         pass
 
 
-def cmd_rsi(args):
-    """분봉으로 RSI 를 잡아 두고, 실시간 체결가로 진행 중인 봉의 종가를 바꿔 가며 다시 계산한다."""
-    appkey, secret = load_keys()
-    books = {}  # SYMB -> 봉 목록
-    for t in args.tickers:
-        excd, symb = resolve(appkey, secret, t)
-        bars = fetch_bars(appkey, secret, excd, symb, args.min)
-        books[symb] = {"excd": excd, "bars": bars, "shown": None}
-        r = rsi_series([b["close"] for b in bars], args.period)
-        print(f"\n{excd}:{symb} {args.min}분봉 RSI({args.period})  봉 {len(bars)}개 (미국시각)")
-        for b, v in list(zip(bars, r))[-args.n:]:
-            print(f"  {b['time_us']}  C {b['close']:>9.4f}  RSI {v:>6.2f}" if v is not None
-                  else f"  {b['time_us']}  C {b['close']:>9.4f}  RSI    -")
-        time.sleep(0.1)
-    if args.once:
-        return
+def ema_series(values, n):
+    """지수이동평균. 첫 값에서 시작한다 (Webull 과 같다)."""
+    k, out, e = 2 / (n + 1), [], None
+    for v in values:
+        e = v if e is None else e + k * (v - e)
+        out.append(e)
+    return out
 
-    def on_tick(d):
-        book = books.get(d["SYMB"])
-        if not book:
-            return
-        bars, price = book["bars"], float(d["LAST"])
-        start = bar_start(d["XYMD"], d["XHMS"], args.min)
-        if not bars or start > bars[-1]["time_us"]:
-            bars.append({"time_us": start, "open": price, "high": price, "low": price,
-                         "close": price, "volume": 0})
-            print(f"--- {d['SYMB']} 새 봉 {start}", flush=True)
-        elif start < bars[-1]["time_us"]:
-            return  # 늦게 온 체결
-        b = bars[-1]
+
+def macd_series(closes, fast=12, slow=26, signal=9):
+    """MACD 선 = EMA(fast) - EMA(slow), 시그널 = MACD 의 EMA(signal), 히스토그램 = 둘의 차."""
+    line = [f - s for f, s in zip(ema_series(closes, fast), ema_series(closes, slow))]
+    sig = ema_series(line, signal)
+    return line, sig, [m - g for m, g in zip(line, sig)]
+
+
+class Book:
+    """한 종목의 분봉. 체결이 오면 진행 중인 봉을 고치고, 시각이 넘어가면 새 봉을 붙인다."""
+
+    def __init__(self, excd, symb, bars, nmin):
+        self.excd, self.symb, self.bars, self.nmin = excd, symb, bars, nmin
+        self.price = bars[-1]["close"] if bars else None
+        self.rate = None
+        self.us_time = ""
+
+    @property
+    def key(self):
+        return f"D{self.excd}{self.symb}"
+
+    def on_tick(self, d):
+        """체결 하나를 반영한다. 새 봉이 생기면 True."""
+        price = float(d["LAST"])
+        start = bar_start(d["XYMD"], d["XHMS"], self.nmin)
+        new = not self.bars or start > self.bars[-1]["time_us"]
+        if new:
+            self.bars.append({"time_us": start, "open": price, "high": price, "low": price,
+                              "close": price, "volume": 0})
+        elif start < self.bars[-1]["time_us"]:
+            return False  # 늦게 온 체결
+        b = self.bars[-1]
         b["close"], b["high"], b["low"] = price, max(b["high"], price), min(b["low"], price)
         b["volume"] += int(d["EVOL"] or 0)
-        v = rsi_series([x["close"] for x in bars[-(args.period * 20):]], args.period)[-1]
-        if v is None or (book["shown"] is not None and abs(v - book["shown"]) < args.step):
-            return
-        book["shown"] = v
-        print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {price:>10.4f}  RSI {v:>6.2f}  "
-              f"(미국 {d['XHMS']})", flush=True)
+        self.price, self.rate, self.us_time = price, float(d["RATE"]), d["XHMS"]
+        return new
 
-    keys = [f"D{b['excd']}{s}" for s, b in books.items()]
-    print("\n구독:",", ".join(keys))
+    def indicators(self, period=14):
+        closes = [b["close"] for b in self.bars[-400:]]
+        line, sig, hist = macd_series(closes)
+        return {"rsi": rsi_series(closes, period)[-1],
+                "macd": line[-1], "signal": sig[-1], "hist": hist[-1]}
+
+
+def load_books(tickers, nmin):
+    appkey, secret = load_keys()
+    books = {}
+    for t in tickers:
+        excd, symb = resolve(appkey, secret, t)
+        books[symb] = Book(excd, symb, fetch_bars(appkey, secret, excd, symb, nmin), nmin)
+        time.sleep(0.1)
+    return appkey, secret, books
+
+
+def run_live(appkey, secret, books, on_tick):
+    def route(d):
+        book = books.get(d["SYMB"])
+        if book:
+            on_tick(book, d)
     try:
-        asyncio.run(live(get_approval_key(appkey, secret), keys, on_tick))
+        asyncio.run(live(get_approval_key(appkey, secret), [b.key for b in books.values()], route))
     except KeyboardInterrupt:
         pass
+
+
+def fmt_ind(ind):
+    rsi = "  -   " if ind["rsi"] is None else f"{ind['rsi']:6.2f}"
+    return (f"RSI {rsi}  MACD {ind['macd']:+.4f}  시그널 {ind['signal']:+.4f}  "
+            f"히스토 {ind['hist']:+.4f}")
+
+
+def cmd_rsi(args):
+    """종목마다 한 줄씩, RSI 가 --step 이상 바뀌거나 MACD 가 시그널을 건널 때 찍는다."""
+    appkey, secret, books = load_books(args.tickers, args.min)
+    for book in books.values():
+        print(f"\n{book.excd}:{book.symb} {args.min}분봉  봉 {len(book.bars)}개 (미국시각)")
+        closes = [b["close"] for b in book.bars]
+        r = rsi_series(closes, args.period)
+        line, sig, hist = macd_series(closes)
+        for i in range(max(0, len(closes) - args.n), len(closes)):
+            ind = {"rsi": r[i], "macd": line[i], "signal": sig[i], "hist": hist[i]}
+            print(f"  {book.bars[i]['time_us']}  C {closes[i]:>9.4f}  {fmt_ind(ind)}")
+    if args.once:
+        return
+    shown = {}
+
+    def on_tick(book, d):
+        if book.on_tick(d):
+            print(f"--- {book.symb} 새 봉 {book.bars[-1]['time_us']}", flush=True)
+        ind = book.indicators(args.period)
+        last = shown.get(book.symb)
+        if ind["rsi"] is None:
+            return
+        if last and abs(ind["rsi"] - last["rsi"]) < args.step and (ind["hist"] > 0) == (last["hist"] > 0):
+            return
+        shown[book.symb] = ind
+        print(f"{datetime.now():%H:%M:%S}  {book.symb:<6} {book.price:>10.4f}  {fmt_ind(ind)}  "
+              f"(미국 {book.us_time})", flush=True)
+
+    print("\n구독:", ", ".join(b.key for b in books.values()))
+    run_live(appkey, secret, books, on_tick)
+
+
+def cmd_watch(args):
+    """종목 전체를 표 하나로 띄워 두고 체결이 올 때마다 고친다."""
+    from rich.console import Console
+    from rich.live import Live
+    from rich.table import Table
+
+    appkey, secret, books = load_books(args.tickers, args.min)
+
+    def table():
+        t = Table(title=f"{args.min}분봉 RSI({args.period}) · MACD(12,26,9)   "
+                        f"{datetime.now():%H:%M:%S} KST", title_justify="left")
+        for c in ("종목", "가격", "등락", "RSI", "MACD", "시그널", "히스토", "미국시각"):
+            t.add_column(c, justify="left" if c == "종목" else "right")
+        for b in books.values():
+            ind = b.indicators(args.period)
+            r = ind["rsi"]
+            rsi = "-" if r is None else (f"[bold cyan]{r:.2f}[/]" if r <= args.lower else
+                                         f"[bold red]{r:.2f}[/]" if r >= args.upper else f"{r:.2f}")
+            hc = "green" if ind["hist"] > 0 else "red"
+            rate = "" if b.rate is None else f"[{'green' if b.rate >= 0 else 'red'}]{b.rate:+.2f}%[/]"
+            us = f"{b.us_time[:2]}:{b.us_time[2:4]}:{b.us_time[4:]}" if b.us_time else ""
+            t.add_row(b.symb, f"{b.price:.4f}", rate, rsi, f"{ind['macd']:+.4f}",
+                      f"{ind['signal']:+.4f}", f"[{hc}]{ind['hist']:+.4f}[/]", us)
+        return t
+
+    with Live(table(), console=Console(), refresh_per_second=2) as view:
+        def on_tick(book, d):
+            book.on_tick(d)
+            view.update(table())
+        run_live(appkey, secret, books, on_tick)
 
 
 def main():
@@ -254,15 +354,22 @@ def main():
     l.add_argument("--prefix", default="D",
                    help="D=정규장·프리/애프터 (무료 실시간), R=주간거래 (R+BAQ 같은 거래소 코드 필요)")
     l.set_defaults(func=cmd_live)
-    r = sub.add_parser("rsi", help="분봉 RSI + 실시간 갱신")
+    r = sub.add_parser("rsi", help="분봉 RSI·MACD + 실시간 갱신 (줄 단위)")
     r.add_argument("tickers", nargs="+")
     r.add_argument("--min", type=int, default=5, help="분 단위 (기본 5)")
     r.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
     r.add_argument("-n", type=int, default=5, help="처음에 보여줄 봉 수 (기본 5)")
     r.add_argument("--step", type=float, default=0.1,
                    help="RSI 가 이만큼 바뀌어야 새로 찍는다 (기본 0.1)")
-    r.add_argument("--once", action="store_true", help="분봉 RSI 만 보고 끝내기")
+    r.add_argument("--once", action="store_true", help="분봉 값만 보고 끝내기")
     r.set_defaults(func=cmd_rsi)
+    w = sub.add_parser("watch", help="RSI·MACD 표를 띄워 두고 실시간 갱신")
+    w.add_argument("tickers", nargs="+")
+    w.add_argument("--min", type=int, default=5, help="분 단위 (기본 5)")
+    w.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
+    w.add_argument("--lower", type=float, default=30, help="이 아래면 RSI 를 파랗게 (기본 30)")
+    w.add_argument("--upper", type=float, default=70, help="이 위면 RSI 를 빨갛게 (기본 70)")
+    w.set_defaults(func=cmd_watch)
     args = p.parse_args()
     args.func(args)
 
