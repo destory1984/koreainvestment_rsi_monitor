@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSI Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6eb; --text: #1b1f24; --muted: #6b7380;
+    --up: #d6453d; --down: #2f6fdf; --pos: #1f9d55; --neg: #d6453d;
+    --hot: #d6453d; --cold: #2f6fdf; --sel: #eef3ff; --flash: #fff4c2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --line: #262c35; --text: #e6e9ee; --muted: #8b94a3;
+      --up: #f0605a; --down: #5b8ff0; --pos: #3cc47c; --neg: #f0605a;
+      --hot: #f0605a; --cold: #5b8ff0; --sel: #1d2633; --flash: #3a3413;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+  h1 { font-size: 17px; margin: 0; font-weight: 700; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .pill { margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 99px;
+          background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+          max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill.ok { color: var(--pos); border-color: var(--pos); }
+  .pill.bad { color: var(--neg); border-color: var(--neg); }
+  main { padding: 0 16px 24px; display: grid; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 12px; text-align: right; white-space: nowrap; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr { border-bottom: 1px solid var(--line); cursor: pointer; }
+  tbody tr:last-child { border-bottom: 0; }
+  tbody tr:hover { background: var(--sel); }
+  tbody tr.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--down); }
+  td.sym { font-weight: 700; }
+  td.sym small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .pos { color: var(--pos); } .neg { color: var(--neg); }
+  .rsi { display: inline-flex; align-items: center; gap: 8px; }
+  .gauge { position: relative; width: 70px; height: 6px; border-radius: 3px; background: var(--line); }
+  .gauge i { position: absolute; top: -3px; width: 3px; height: 12px; border-radius: 2px; background: var(--text); }
+  .gauge b { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--muted) 25%, transparent); }
+  .hot { color: var(--hot); font-weight: 700; } .cold { color: var(--cold); font-weight: 700; }
+  td.flash { animation: flash .8s ease-out; }
+  @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
+  .charthead { display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 4px; }
+  .charthead h2 { margin: 0; font-size: 15px; }
+  .pane { position: relative; }
+  .pane span { position: absolute; left: 10px; top: 6px; z-index: 2; font-size: 11px; color: var(--muted); }
+  #c-price { height: 300px; } #c-rsi { height: 130px; } #c-macd { height: 150px; }
+  @media (max-width: 600px) {
+    #c-price { height: 220px; } #c-rsi { height: 110px; } #c-macd { height: 120px; }
+    .gauge { display: none; }
+    th, td { padding: 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>RSI Monitor</h1>
+  <span class="sub" id="sub"></span>
+  <span class="pill" id="status">연결 중</span>
+</header>
+<main>
+  <div class="card scroll">
+    <table>
+      <thead><tr><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>MACD</th><th>시그널</th><th>히스토</th><th>미국시각</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="charthead"><h2 id="ctitle"></h2><span class="sub">시각은 미국 동부 시각</span></div>
+    <div class="pane" id="c-price"></div>
+    <div class="pane" id="c-rsi"><span>RSI</span></div>
+    <div class="pane" id="c-macd"><span>MACD · 시그널 · 히스토그램</span></div>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let cfg = {}, selected = null, rows = {}, charts = null;
+
+const f = (v, d = 2) => v == null ? "-" : v.toFixed(d);
+const sgn = (v, d = 4) => v == null ? "-" : (v >= 0 ? "+" : "") + v.toFixed(d);
+const priceDigits = p => p >= 100 ? 2 : 4;
+const usTime = t => t ? `${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}` : "";
+
+function setStatus(s) {
+  const el = $("#status");
+  el.textContent = s; el.title = s;
+  el.className = "pill " + (s === "실시간" ? "ok" : /끊김|이미/.test(s) ? "bad" : "");
+}
+
+function rsiCell(r) {
+  if (r == null) return "-";
+  const cls = r <= cfg.lower ? "cold" : r >= cfg.upper ? "hot" : "";
+  return `<span class="rsi"><span class="gauge"><b style="left:${cfg.lower}%;width:${cfg.upper - cfg.lower}%"></b>` +
+         `<i style="left:calc(${Math.max(0, Math.min(100, r))}% - 1px)"></i></span><span class="${cls}">${f(r)}</span></span>`;
+}
+
+function cells(r) {
+  const d = priceDigits(r.price || 0);
+  return [
+    `${r.symb}<small>${r.excd}</small>`,
+    r.price == null ? "-" : r.price.toFixed(d),
+    r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
+    rsiCell(r.rsi),
+    sgn(r.macd), sgn(r.signal),
+    `<span class="${r.hist >= 0 ? "pos" : "neg"}">${sgn(r.hist)}</span>`,
+    usTime(r.us_time),
+  ];
+}
+
+function renderRow(r) {
+  let tr = document.getElementById("r-" + r.symb);
+  const c = cells(r);
+  if (!tr) {
+    tr = document.createElement("tr");
+    tr.id = "r-" + r.symb;
+    tr.innerHTML = c.map((x, i) => `<td class="${i ? "" : "sym"}">${x}</td>`).join("");
+    tr.onclick = () => select(r.symb);
+    $("#rows").appendChild(tr);
+  } else {
+    [...tr.children].forEach((td, i) => {
+      if (td.innerHTML !== c[i]) {
+        td.innerHTML = c[i];
+        if (i === 1 || i === 3) { td.classList.remove("flash"); void td.offsetWidth; td.classList.add("flash"); }
+      }
+    });
+  }
+  rows[r.symb] = r;
+}
+
+function makeCharts() {
+  const base = {
+    layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: 11 },
+    grid: { vertLines: { color: css("--line") }, horzLines: { color: css("--line") } },
+    rightPriceScale: { borderColor: css("--line"), minimumWidth: 70 },
+    timeScale: { borderColor: css("--line"), timeVisible: true, secondsVisible: false },
+    crosshair: { mode: 0 },
+    autoSize: true,
+  };
+  const price = LightweightCharts.createChart($("#c-price"), base);
+  const rsi = LightweightCharts.createChart($("#c-rsi"), base);
+  const macd = LightweightCharts.createChart($("#c-macd"), base);
+  const s = {
+    candle: price.addCandlestickSeries({ upColor: css("--up"), downColor: css("--down"),
+      borderVisible: false, wickUpColor: css("--up"), wickDownColor: css("--down") }),
+    rsi: rsi.addLineSeries({ color: css("--text"), lineWidth: 2, priceLineVisible: false }),
+    hist: macd.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false }),
+    macd: macd.addLineSeries({ color: css("--down"), lineWidth: 2, priceLineVisible: false }),
+    signal: macd.addLineSeries({ color: "#e69a28", lineWidth: 2, priceLineVisible: false }),
+  };
+  s.rsi.createPriceLine({ price: cfg.upper, color: css("--hot"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+  s.rsi.createPriceLine({ price: cfg.lower, color: css("--cold"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+  rsi.priceScale("right").applyOptions({ autoScale: false, scaleMargins: { top: 0.05, bottom: 0.05 } });
+  s.rsi.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+  price.timeScale().applyOptions({ visible: false });
+  rsi.timeScale().applyOptions({ visible: false });
+  const all = [price, rsi, macd];
+  all.forEach(a => a.timeScale().subscribeVisibleLogicalRangeChange(r => {
+    if (!r) return;
+    all.forEach(b => b !== a && b.timeScale().setVisibleLogicalRange(r));
+  }));
+  return { all, s };
+}
+
+const histPt = p => p.value == null ? p : ({ time: p.time, value: p.value, color: p.value >= 0 ? css("--pos") : css("--neg") });
+
+async function select(symb) {
+  selected = symb;
+  document.querySelectorAll("tbody tr").forEach(tr => tr.classList.toggle("sel", tr.id === "r-" + symb));
+  $("#ctitle").textContent = `${symb} · ${cfg.nmin}분봉`;
+  const d = await (await fetch("/api/chart/" + symb)).json();
+  if (selected !== symb) return;
+  if (!charts) charts = makeCharts();
+  const s = charts.s;
+  s.candle.setData(d.bars);
+  s.rsi.setData(d.rsi);
+  s.macd.setData(d.macd);
+  s.signal.setData(d.signal);
+  s.hist.setData(d.hist.map(histPt));
+  charts.all[0].timeScale().setVisibleLogicalRange({ from: d.bars.length - 80, to: d.bars.length + 2 });
+  try { localStorage.setItem("sel", symb); } catch (e) {}
+}
+
+function pushChart(r) {
+  if (!charts || r.symb !== selected || !r.bar) return;
+  const t = r.bar.time, s = charts.s;
+  s.candle.update(r.bar);
+  if (r.rsi != null) s.rsi.update({ time: t, value: r.rsi });
+  s.macd.update({ time: t, value: r.macd });
+  s.signal.update({ time: t, value: r.signal });
+  s.hist.update(histPt({ time: t, value: r.hist }));
+}
+
+async function loadState() {
+  const st = await (await fetch("/api/state")).json();
+  cfg = st;
+  $("#sub").textContent = `${st.nmin}분봉 · RSI(${st.period}) · MACD(12,26,9)`;
+  setStatus(st.status);
+  st.rows.forEach(renderRow);
+  let want = null;
+  try { want = localStorage.getItem("sel"); } catch (e) {}
+  select(rows[want] ? want : st.rows[0]?.symb);
+}
+
+function connect() {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "rows") m.rows.forEach(r => { renderRow(r); pushChart(r); });
+    else if (m.type === "status") setStatus(m.status);
+    else if (m.type === "reload") loadState();
+  };
+  ws.onclose = () => { setStatus("서버와 끊김 — 다시 붙는 중"); setTimeout(() => { loadState().catch(() => {}); connect(); }, 3000); };
+}
+
+loadState().then(connect);
+</script>
+</body>
+</html>

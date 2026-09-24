@@ -157,6 +157,14 @@ def print_tick(d):
           f"(미국 {d['XHMS']})", flush=True)
 
 
+class KisInUse(Exception):
+    """앱키 하나에 실시간 연결은 하나뿐인데 이미 다른 곳에서 열려 있다."""
+
+    def __str__(self):
+        return ("이 앱키로 실시간 연결이 이미 열려 있다. 앱키 하나에 연결은 하나뿐이니 "
+                "다른 창의 kis_rsi.py / kis_web.py 를 끄고 다시 할 것.")
+
+
 async def live(approval_key, keys, on_tick=print_tick):
     import websockets
     async with websockets.connect(WS, ping_interval=None) as ws:
@@ -179,8 +187,7 @@ async def live(approval_key, keys, on_tick=print_tick):
             else:
                 body = j.get("body", {})
                 if "ALREADY IN USE" in (body.get("msg1") or ""):
-                    raise SystemExit("이 앱키로 실시간 연결이 이미 열려 있다. 앱키 하나에 연결은 하나뿐이니 "
-                                     "다른 창의 kis_rsi.py 를 끄고 다시 할 것.")
+                    raise KisInUse()
                 print(f"[{j['header'].get('tr_key')}] {body.get('msg1')}", flush=True)
 
 
@@ -195,6 +202,8 @@ def cmd_live(args):
         asyncio.run(live(get_approval_key(appkey, secret), keys))
     except KeyboardInterrupt:
         pass
+    except KisInUse as e:
+        sys.exit(str(e))
 
 
 def ema_series(values, n):
@@ -242,6 +251,12 @@ class Book:
         self.price, self.rate, self.us_time = price, float(d["RATE"]), d["XHMS"]
         return new
 
+    def series(self, period=14):
+        """차트용: 봉마다 RSI·MACD·시그널·히스토그램."""
+        closes = [b["close"] for b in self.bars]
+        line, sig, hist = macd_series(closes)
+        return {"rsi": rsi_series(closes, period), "macd": line, "signal": sig, "hist": hist}
+
     def indicators(self, period=14):
         closes = [b["close"] for b in self.bars[-400:]]
         line, sig, hist = macd_series(closes)
@@ -268,6 +283,8 @@ def run_live(appkey, secret, books, on_tick):
         asyncio.run(live(get_approval_key(appkey, secret), [b.key for b in books.values()], route))
     except KeyboardInterrupt:
         pass
+    except KisInUse as e:
+        sys.exit(str(e))
 
 
 def fmt_ind(ind):
