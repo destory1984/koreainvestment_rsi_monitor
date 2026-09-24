@@ -57,9 +57,9 @@
   .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
   .rsi { display: inline-flex; align-items: center; gap: 6px; }
-  .gauge { position: relative; width: 56px; height: 4px; border-radius: 2px; background: var(--line); }
-  .gauge i { position: absolute; top: -3px; width: 2px; height: 10px; border-radius: 1px; background: var(--text); }
-  .gauge b { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--muted) 25%, transparent); }
+  .gauge { position: relative; width: 56px; height: 5px; border-radius: 3px; }
+  .gauge i { position: absolute; top: -3px; width: 3px; height: 11px; border-radius: 2px; background: var(--text);
+             box-shadow: 0 0 0 1px var(--panel); }
   .trend { display: inline-block; width: 10px; text-align: center; font-size: 9px; }
   .hot { color: var(--hot); } .cold { color: var(--cold); }
   .hot.strong, .cold.strong { font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
@@ -146,6 +146,17 @@ function setMsg(s, err) {
   $("#msg").className = "sub" + (err ? " err" : "");
 }
 
+// 막대 칠: 30 아래 진한 파랑, 30~35 옅은 파랑, 35~65 회색(밴드 안), 65~70 옅은 빨강, 70 위 진한 빨강
+let _gauge = "";
+function gaugeBg() {
+  if (_gauge) return _gauge;
+  const cold = css("--cold"), hot = css("--hot"), mid = css("--line");
+  const soft = c => `color-mix(in srgb, ${c} 45%, ${mid})`;
+  const a = cfg.strong_lower, b = cfg.lower, c = cfg.upper, d = cfg.strong_upper;
+  return _gauge = `linear-gradient(to right, ${cold} 0 ${a}%, ${soft(cold)} ${a}% ${b}%, ${mid} ${b}% ${c}%, ` +
+                  `${soft(hot)} ${c}% ${d}%, ${hot} ${d}% 100%)`;
+}
+
 function rsiCell(r) {
   if (r.rsi == null) return "-";
   const v = r.rsi;
@@ -157,8 +168,8 @@ function rsiCell(r) {
     if (d > TREND_EPS) trend = '<span class="trend up">▲</span>';
     else if (d < -TREND_EPS) trend = '<span class="trend down">▼</span>';
   }
-  return `<span class="rsi"><span class="gauge"><b style="left:${cfg.lower}%;width:${cfg.upper - cfg.lower}%"></b>` +
-         `<i style="left:calc(${Math.max(0, Math.min(100, v))}% - 1px)"></i></span>` +
+  return `<span class="rsi"><span class="gauge" style="background:${gaugeBg()}">` +
+         `<i style="left:calc(${Math.max(0, Math.min(100, v))}% - 1.5px)"></i></span>` +
          `<span class="${cls}">${f(v)}</span>${trend}</span>`;
 }
 
