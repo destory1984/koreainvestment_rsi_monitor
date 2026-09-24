@@ -50,7 +50,7 @@
   td.sym { font-weight: 700; width: 74px; max-width: 74px; overflow: hidden; text-overflow: ellipsis; }
   td.del { width: 1%; padding: 0 4px; }
   td.del button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer;
-                  padding: 2px 5px; border-radius: 4px; visibility: hidden; }
+                  padding: 2px 5px; border-radius: 4px; visibility: hidden; display: inline-flex; }
   tbody tr:hover td.del button, tbody tr.sel td.del button { visibility: visible; }
   td.del button:hover { color: var(--neg); background: var(--bg); }
   @media (hover: none) { td.del button { visibility: visible; } }
@@ -212,6 +212,11 @@ function cells(r) {
   ];
 }
 
+const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/>' +
+  '<path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+  '<path d="M10 11v6M14 11v6"/></svg>';
+
 function renderRow(r) {
   let tr = document.getElementById("r-" + r.symb);
   const c = cells(r);
@@ -220,7 +225,7 @@ function renderRow(r) {
     tr.id = "r-" + r.symb;
     tr.title = r.excd === "KRX" ? `${r.name} · ${r.symb}` : `${r.excd}:${r.symb}`;
     tr.innerHTML = c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 8 ? "last" : ""}">${x}</td>`).join("") +
-                   `<td class="del"><button title="빼기">✕</button></td>`;
+                   `<td class="del"><button title="빼기" aria-label="종목 빼기">${TRASH}</button></td>`;
     tr.onclick = () => select(r.symb);
     tr.querySelector(".del button").onclick = e => { e.stopPropagation(); removeTicker(r.symb); };
     $("#rows").appendChild(tr);
