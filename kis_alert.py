@@ -45,8 +45,9 @@ TTS_LOCAL_EMOTION = (("시작", "기쁘고 활기찬 목소리로, 또렷하게 
 TTS_TRIM_LEVEL = 0.01         # 이보다 작은 소리는 빈 자리로 본다
 TTS_TRIM_KEEP = 0.06          # 잘라낸 뒤 앞뒤에 남길 초
 TTS_EDGE_VOICE = "ko-KR-SunHiNeural"
+TTS_EDGE_RATE = 20            # Edge 빠르기(%). +30 은 빨랐다
 TTS_VOICE = "Heami"           # SAPI 로 물러날 때 고를 목소리
-TTS_RATE = 6                  # -10 ~ 10. Edge 는 한 칸이 5%, SAPI 는 그대로
+TTS_RATE = 6                  # SAPI 빠르기 -10 ~ 10
 TTS_PITCH = 0                 # Edge 음높이, 한 칸이 5Hz
 TTS_VOLUME = 0                # Edge 크기, 한 칸이 5%
 # 시작 인사. kis_settings.json 의 "greeting" / "greeting_again" 으로 바꾼다 (빈 문자열이면 인사 없음)
@@ -261,7 +262,7 @@ class Voice:
             sig += f"|trim{TTS_TRIM_LEVEL}:{TTS_TRIM_KEEP}"
             ext = "wav"
         else:
-            sig, ext = f"edge|{TTS_EDGE_VOICE}|{TTS_RATE}|{TTS_PITCH}|{TTS_VOLUME}", "mp3"
+            sig, ext = f"edge|{TTS_EDGE_VOICE}|{TTS_EDGE_RATE}%|{TTS_PITCH}|{TTS_VOLUME}", "mp3"
         key = hashlib.blake2b(f"{lang}|{sig}|{text}".encode("utf-8"), digest_size=8).hexdigest()
         return self.dir / f"{lang}_{key}.{ext}"
 
@@ -312,7 +313,7 @@ class Voice:
     def _edge_save(self, text, tmp):
         import asyncio
         import edge_tts
-        c = edge_tts.Communicate(text, TTS_EDGE_VOICE, rate=f"{TTS_RATE * 5:+d}%",
+        c = edge_tts.Communicate(text, TTS_EDGE_VOICE, rate=f"{TTS_EDGE_RATE:+d}%",
                                  pitch=f"{TTS_PITCH * 5:+d}Hz", volume=f"{TTS_VOLUME * 5:+d}%")
         asyncio.run(c.save(str(tmp)))
 

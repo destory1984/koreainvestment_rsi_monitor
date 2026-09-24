@@ -62,7 +62,7 @@ python kis_web.py TSLA SOXL 005930
 | 차례 | 목소리 | 필요한 것 |
 |---|---|---|
 | 1 | 로컬 TTS (Qwen3-TTS 1.7B, 화자 Sohee) | NVIDIA GPU 와 아래 서버. 가장 자연스럽다 |
-| 2 | **Edge 음성** (ko-KR-SunHiNeural) | 인터넷만. `requirements.txt` 로 이미 깔린다. **대부분은 이것을 쓰게 된다** |
+| 2 | **Edge 음성** (ko-KR-SunHiNeural, 빠르기 +20%) | 인터넷만. `requirements.txt` 로 이미 깔린다. **대부분은 이것을 쓰게 된다** |
 | 3 | 윈도우 음성 (Heami) | 없음. 인터넷이 끊겼을 때 |
 
 켜면 어느 목소리를 쓰는지 첫 줄에 찍는다(`알림 목소리: Edge 음성 …`). 알림 문장은 켤 때와 종목을 더할 때
