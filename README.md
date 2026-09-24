@@ -44,10 +44,10 @@ export KIS_APPKEY=앱키 KIS_APPSECRET=시크릿
 ### 분봉
 
 ```bash
-python kis_us.py bars TSLA SOXL        # 5분봉, 최근 20개를 보여준다
-python kis_us.py bars TSLA --min 1     # 1분봉
-python kis_us.py bars NYS:BE -n 50     # 거래소를 직접 적기, 50개 보여주기
-python kis_us.py bars TSLA --today     # 전날 봉은 빼기
+python kis_rsi.py bars TSLA SOXL        # 5분봉, 최근 20개를 보여준다
+python kis_rsi.py bars TSLA --min 1     # 1분봉
+python kis_rsi.py bars NYS:BE -n 50     # 거래소를 직접 적기, 50개 보여주기
+python kis_rsi.py bars TSLA --today     # 전날 봉은 빼기
 ```
 
 한 번에 최근 120개까지 받는다. 5분봉이면 미국 시각 새벽 5시 프리장부터 지금까지 정도다.
@@ -55,7 +55,7 @@ python kis_us.py bars TSLA --today     # 전날 봉은 빼기
 ### 실시간 체결가
 
 ```bash
-python kis_us.py live TSLA SOXL FCEL
+python kis_rsi.py live TSLA SOXL FCEL
 ```
 
 체결될 때마다 한 줄씩 찍는다. Ctrl+C 로 끝낸다.
@@ -71,7 +71,7 @@ python kis_us.py live TSLA SOXL FCEL
 ### RSI · MACD 표
 
 ```bash
-python kis_us.py watch TSLA SOXL MU
+python kis_rsi.py watch TSLA SOXL MU
 ```
 
 종목마다 한 줄씩 표를 띄워 두고 체결이 올 때마다 고친다. RSI 가 30 이하면 파랗게, 70 이상이면
@@ -86,14 +86,14 @@ python kis_us.py watch TSLA SOXL MU
 └──────┴───────────┴──────┴───────┴─────────┴─────────┴─────────┴──────────┘
 ```
 
-Git Bash 에서 표가 깨지면 `winpty python kis_us.py watch ...` 로 실행한다.
+Git Bash 에서 표가 깨지면 `winpty python kis_rsi.py watch ...` 로 실행한다.
 
 ### RSI · MACD 줄 단위
 
 ```bash
-python kis_us.py rsi TSLA SOXL             # 바뀔 때마다 한 줄씩
-python kis_us.py rsi TSLA --once           # 분봉 값만 보고 끝내기
-python kis_us.py rsi TSLA --min 1 --period 9
+python kis_rsi.py rsi TSLA SOXL             # 바뀔 때마다 한 줄씩
+python kis_rsi.py rsi TSLA --once           # 분봉 값만 보고 끝내기
+python kis_rsi.py rsi TSLA --min 1 --period 9
 ```
 
 RSI 가 0.1 이상 바뀌거나 MACD 히스토그램 부호가 바뀔 때만 찍는다 (`--step` 으로 바꾼다).

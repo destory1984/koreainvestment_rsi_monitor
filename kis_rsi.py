@@ -1,10 +1,10 @@
 """한국투자증권 Open API 로 미국주식 분봉과 실시간 체결가를 받아온다.
 
-    python kis_us.py bars TSLA              # 5분봉 (오늘+전일, 최근 120개)
-    python kis_us.py bars NYS:BE --min 1    # 거래소를 직접 적을 수도 있다
-    python kis_us.py live TSLA SOXL         # 실시간 체결가 (Ctrl+C 로 끝)
-    python kis_us.py rsi TSLA SOXL          # 5분봉 RSI(14)·MACD 를 실시간으로 (줄 단위)
-    python kis_us.py watch TSLA SOXL        # 같은 것을 표 하나로
+    python kis_rsi.py bars TSLA              # 5분봉 (오늘+전일, 최근 120개)
+    python kis_rsi.py bars NYS:BE --min 1    # 거래소를 직접 적을 수도 있다
+    python kis_rsi.py live TSLA SOXL         # 실시간 체결가 (Ctrl+C 로 끝)
+    python kis_rsi.py rsi TSLA SOXL          # 5분봉 RSI(14)·MACD 를 실시간으로 (줄 단위)
+    python kis_rsi.py watch TSLA SOXL        # 같은 것을 표 하나로
 
 키는 kis_config.json (저장소에 안 올라감) 이나 환경변수 KIS_APPKEY / KIS_APPSECRET 에 둔다.
     {"appkey": "...", "appsecret": "..."}
@@ -180,7 +180,7 @@ async def live(approval_key, keys, on_tick=print_tick):
                 body = j.get("body", {})
                 if "ALREADY IN USE" in (body.get("msg1") or ""):
                     raise SystemExit("이 앱키로 실시간 연결이 이미 열려 있다. 앱키 하나에 연결은 하나뿐이니 "
-                                     "다른 창의 kis_us.py 를 끄고 다시 할 것.")
+                                     "다른 창의 kis_rsi.py 를 끄고 다시 할 것.")
                 print(f"[{j['header'].get('tr_key')}] {body.get('msg1')}", flush=True)
 
 
