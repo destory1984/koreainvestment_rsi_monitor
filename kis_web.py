@@ -49,6 +49,7 @@ class Hub:
         self.clients = set()
         self.dirty = set()
         self.status = "시작 중"
+        self.markets = []         # 한 줄 띠: [{"name", "price", "rate"}]
         self.ws = None            # 한국투자증권 실시간 연결 (열려 있을 때만)
         self.approval_key = None
         self.lock = asyncio.Lock()
@@ -176,6 +177,33 @@ class Hub:
                 self.set_status(f"연결 끊김 ({type(e).__name__}) — 5초 뒤 다시")
                 await asyncio.sleep(5)
 
+    # ── 지수 띠 ───────────────────────────────────────────────
+    def fetch_markets(self):
+        out = []
+        for name, kind, code in k.MARKETS:
+            try:
+                price, rate = k.fetch_market(self.appkey, self.secret, kind, code)
+            except Exception:
+                price, rate = None, None
+            out.append({"name": name, "price": price, "rate": rate, "kind": kind})
+            time.sleep(0.1)
+        try:
+            price, rate = k.fetch_bitcoin()
+        except Exception:
+            price, rate = None, None
+        out.append({"name": "비트코인", "price": price, "rate": rate, "kind": "BTC"})
+        return out
+
+    async def markets_loop(self):
+        """지수는 실시간으로 밀어 주는 통로가 없어 10초마다 묻는다."""
+        while True:
+            try:
+                self.markets = await asyncio.to_thread(self.fetch_markets)
+                await self.broadcast({"type": "markets", "markets": self.markets})
+            except Exception as e:
+                print(f"지수 띠 — {e}", flush=True)
+            await asyncio.sleep(10)
+
     # ── 알림 ──────────────────────────────────────────────────
     @staticmethod
     def read_log():
@@ -260,7 +288,7 @@ class Hub:
         return {"status": self.status, "nmin": self.nmin, "period": self.period,
                 "lower": al.LOWER, "upper": al.UPPER,
                 "strong_lower": al.STRONG_LOWER, "strong_upper": al.STRONG_UPPER,
-                "max": MAX_TICKERS, "sound": self.settings["sound"],
+                "max": MAX_TICKERS, "sound": self.settings["sound"], "markets": self.markets,
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -316,7 +344,8 @@ hub: Hub = None
 @asynccontextmanager
 async def lifespan(app):
     await asyncio.to_thread(hub.load)
-    tasks = [asyncio.create_task(hub.kis_loop()), asyncio.create_task(hub.push_loop())]
+    tasks = [asyncio.create_task(hub.kis_loop()), asyncio.create_task(hub.push_loop()),
+             asyncio.create_task(hub.markets_loop())]
     yield
     for t in tasks:
         t.cancel()

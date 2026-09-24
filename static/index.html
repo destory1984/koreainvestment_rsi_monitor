@@ -31,6 +31,12 @@
   .pill.ok { color: var(--pos); border-color: var(--pos); }
   .pill.bad { color: var(--neg); border-color: var(--neg); }
   main { padding: 0 12px 16px; display: grid; gap: 10px; }
+  #markets { display: flex; gap: 16px; padding: 0 12px 8px; overflow-x: auto; white-space: nowrap;
+             font-variant-numeric: tabular-nums; scrollbar-width: none; }
+  #markets::-webkit-scrollbar { display: none; }
+  #markets span.m { display: inline-flex; gap: 5px; align-items: baseline; }
+  #markets .n { color: var(--muted); }
+  #markets .v { font-weight: 600; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .scroll { overflow-x: auto; }
   form.add { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
@@ -99,6 +105,7 @@
   <button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">시험</button>
   <span class="pill" id="status">연결 중</span>
 </header>
+<div id="markets"></div>
 <main>
   <div class="card">
     <form class="add" id="add">
@@ -403,6 +410,17 @@ function setMarkers() {
   charts.s.candle.setMarkers(m);
 }
 
+function renderMarkets(list) {
+  $("#markets").innerHTML = (list || []).map(m => {
+    if (m.price == null) return `<span class="m"><span class="n">${esc(m.name)}</span><span class="dim">-</span></span>`;
+    const digits = m.kind === "BTC" ? 0 : 2;
+    const v = m.price.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    const cls = m.rate > 0 ? "up" : m.rate < 0 ? "down" : "dim";
+    return `<span class="m"><span class="n">${esc(m.name)}</span><span class="v">${v}</span>` +
+           `<span class="${cls}">${sgn(m.rate, 2)}%</span></span>`;
+  }).join("");
+}
+
 function setSound(on) {
   cfg.sound = on;
   $("#sound").textContent = on ? "🔊 소리" : "🔇 소리 꺼짐";
@@ -429,6 +447,7 @@ async function loadState() {
   $("#sub").textContent = `${st.nmin}분봉 · RSI(${st.period}) · MACD(12,26,9)`;
   setStatus(st.status);
   setSound(st.sound);
+  renderMarkets(st.markets);
   events = st.events || [];
   renderEvents();
   $("#rows").innerHTML = ""; rows = {};
@@ -447,6 +466,7 @@ function connect() {
     else if (m.type === "remove") dropRow(m.symb);
     else if (m.type === "status") setStatus(m.status);
     else if (m.type === "alert") addEvent(m.event);
+    else if (m.type === "markets") renderMarkets(m.markets);
     else if (m.type === "reload") loadState();
   };
   ws.onclose = () => { setStatus("서버와 끊김 — 다시 붙는 중"); setTimeout(() => { loadState().catch(() => {}); connect(); }, 3000); };

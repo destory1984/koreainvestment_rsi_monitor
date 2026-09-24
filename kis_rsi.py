@@ -176,6 +176,42 @@ def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
     return [bars[k] for k in sorted(bars)][-need:]
 
 
+# 한 줄 띠에 보일 지수·환율. (이름, 종류, 코드)
+#   N 해외지수 · X 환율 — 해외 일별시세(FHKST03030100) 의 요약값을 쓴다
+#   U 국내지수 — 국내업종 현재지수(FHPUP02100000)
+# 다우존스는 한국투자증권 코드를 찾지 못해 뺐다 (.DJI 등은 빈 값이 온다).
+MARKETS = [("S&P500", "N", "SPX"), ("나스닥", "N", "COMP"), ("코스피", "U", "0001"),
+           ("코스닥", "U", "1001"), ("니케이", "N", "JP#NI225"), ("원/달러", "X", "FX@KRW")]
+
+
+def fetch_market(appkey, secret, kind, code):
+    """지수·환율 하나의 (현재값, 등락률%)."""
+    token = get_token(appkey, secret)
+    head = {"authorization": f"Bearer {token}", "appkey": appkey, "appsecret": secret, "custtype": "P"}
+    if kind == "U":
+        r = requests.get(f"{REST}/uapi/domestic-stock/v1/quotations/inquire-index-price",
+                         headers={**head, "tr_id": "FHPUP02100000"},
+                         params={"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code}, timeout=10)
+        o = r.json().get("output") or {}
+        return float(o["bstp_nmix_prpr"]), float(o["bstp_nmix_prdy_ctrt"])
+    today = datetime.now()
+    r = requests.get(f"{REST}/uapi/overseas-price/v1/quotations/inquire-daily-chartprice",
+                     headers={**head, "tr_id": "FHKST03030100"},
+                     params={"FID_COND_MRKT_DIV_CODE": kind, "FID_INPUT_ISCD": code,
+                             "FID_INPUT_DATE_1": (today - timedelta(days=10)).strftime("%Y%m%d"),
+                             "FID_INPUT_DATE_2": today.strftime("%Y%m%d"),
+                             "FID_PERIOD_DIV_CODE": "D"}, timeout=10)
+    o = r.json().get("output1") or {}
+    return float(o["ovrs_nmix_prpr"]), float(o["prdy_ctrt"])
+
+
+def fetch_bitcoin():
+    """업비트 공개 시세(키 없음). (원화 가격, 전일 대비 %)."""
+    r = requests.get("https://api.upbit.com/v1/ticker", params={"markets": "KRW-BTC"}, timeout=10)
+    o = r.json()[0]
+    return float(o["trade_price"]), float(o["signed_change_rate"]) * 100
+
+
 def resolve(appkey, secret, ticker):
     """'NYS:BE' 는 그대로, 'BE' 는 나스닥→뉴욕→아멕스 순으로 찾아서 기억해 둔다.
     숫자 여섯 자리('005930')나 'KRX:005930' 은 국내 종목이다."""
