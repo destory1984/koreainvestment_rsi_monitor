@@ -9,57 +9,67 @@
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6eb; --text: #1b1f24; --muted: #6b7380;
     --up: #d6453d; --down: #2f6fdf; --pos: #1f9d55; --neg: #d6453d;
-    --hot: #d6453d; --cold: #2f6fdf; --sel: #eef3ff; --flash: #fff4c2;
+    --hot: #d6453d; --cold: #2f6fdf; --sel: #eef3ff; --input: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1216; --panel: #171b21; --line: #262c35; --text: #e6e9ee; --muted: #8b94a3;
       --up: #f0605a; --down: #5b8ff0; --pos: #3cc47c; --neg: #f0605a;
-      --hot: #f0605a; --cold: #5b8ff0; --sel: #1d2633; --flash: #3a3413;
+      --hot: #f0605a; --cold: #5b8ff0; --sel: #1d2633; --input: #0f1216;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.4 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
-  h1 { font-size: 17px; margin: 0; font-weight: 700; }
-  .sub { color: var(--muted); font-size: 13px; }
-  .pill { margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 99px;
+         font: 10px/1.4 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
+  h1 { font-size: 12px; margin: 0; font-weight: 700; }
+  .sub { color: var(--muted); font-size: 10px; }
+  .pill { margin-left: auto; font-size: 10px; padding: 2px 8px; border-radius: 99px;
           background: var(--panel); border: 1px solid var(--line); color: var(--muted);
           max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.ok { color: var(--pos); border-color: var(--pos); }
   .pill.bad { color: var(--neg); border-color: var(--neg); }
-  main { padding: 0 16px 24px; display: grid; gap: 16px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  main { padding: 0 12px 16px; display: grid; gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .scroll { overflow-x: auto; }
+  form.add { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  form.add input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line);
+                   border-radius: 5px; padding: 3px 6px; width: 150px; }
+  form.add button { font: inherit; border: 1px solid var(--line); background: var(--sel); color: var(--text);
+                    border-radius: 5px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  form.add button:disabled { opacity: .5; cursor: default; }
+  #msg { color: var(--muted); } #msg.err { color: var(--neg); }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th, td { padding: 9px 12px; text-align: right; white-space: nowrap; }
-  th { font-size: 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+  th, td { padding: 4px 8px; text-align: right; white-space: nowrap; }
+  th { font-size: 10px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
   tbody tr { border-bottom: 1px solid var(--line); cursor: pointer; }
   tbody tr:last-child { border-bottom: 0; }
   tbody tr:hover { background: var(--sel); }
   tbody tr.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--down); }
-  td.sym { font-weight: 700; }
-  td.sym small { color: var(--muted); font-weight: 400; margin-left: 4px; }
-  .up { color: var(--up); } .down { color: var(--down); }
+  td.sym { font-weight: 700; width: 74px; max-width: 74px; overflow: hidden; text-overflow: ellipsis; }
+  td.del { width: 1%; padding: 0 4px; }
+  td.del button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer;
+                  padding: 2px 5px; border-radius: 4px; visibility: hidden; }
+  tbody tr:hover td.del button, tbody tr.sel td.del button { visibility: visible; }
+  td.del button:hover { color: var(--neg); background: var(--bg); }
+  @media (hover: none) { td.del button { visibility: visible; } }
+  .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
-  .rsi { display: inline-flex; align-items: center; gap: 8px; }
-  .gauge { position: relative; width: 70px; height: 6px; border-radius: 3px; background: var(--line); }
-  .gauge i { position: absolute; top: -3px; width: 3px; height: 12px; border-radius: 2px; background: var(--text); }
+  .rsi { display: inline-flex; align-items: center; gap: 6px; }
+  .gauge { position: relative; width: 56px; height: 4px; border-radius: 2px; background: var(--line); }
+  .gauge i { position: absolute; top: -3px; width: 2px; height: 10px; border-radius: 1px; background: var(--text); }
   .gauge b { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--muted) 25%, transparent); }
+  .trend { display: inline-block; width: 10px; text-align: center; font-size: 9px; }
   .hot { color: var(--hot); font-weight: 700; } .cold { color: var(--cold); font-weight: 700; }
-  td.flash { animation: flash .8s ease-out; }
-  @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
-  .charthead { display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 4px; }
-  .charthead h2 { margin: 0; font-size: 15px; }
+  .charthead { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 2px; }
+  .charthead h2 { margin: 0; font-size: 11px; }
   .pane { position: relative; }
-  .pane span { position: absolute; left: 10px; top: 6px; z-index: 2; font-size: 11px; color: var(--muted); }
-  #c-price { height: 300px; } #c-rsi { height: 130px; } #c-macd { height: 150px; }
+  .pane span { position: absolute; left: 8px; top: 4px; z-index: 2; font-size: 9px; color: var(--muted); }
+  #c-price { height: 260px; } #c-rsi { height: 110px; } #c-macd { height: 130px; }
   @media (max-width: 600px) {
-    #c-price { height: 220px; } #c-rsi { height: 110px; } #c-macd { height: 120px; }
+    #c-price { height: 200px; } #c-rsi { height: 90px; } #c-macd { height: 100px; }
     .gauge { display: none; }
-    th, td { padding: 8px; }
   }
 </style>
 </head>
@@ -70,14 +80,21 @@
   <span class="pill" id="status">연결 중</span>
 </header>
 <main>
-  <div class="card scroll">
-    <table>
-      <thead><tr><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>MACD</th><th>시그널</th><th>히스토</th><th>미국시각</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
+  <div class="card">
+    <form class="add" id="add">
+      <input id="ticker" placeholder="TSLA · NYS:BE · 005930" autocomplete="off" spellcheck="false">
+      <button id="addbtn">추가</button>
+      <span id="msg" class="sub">미국은 티커, 국내는 종목코드 여섯 자리</span>
+    </form>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>MACD</th><th>시그널</th><th>히스토</th><th>현지시각</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
   </div>
   <div class="card">
-    <div class="charthead"><h2 id="ctitle"></h2><span class="sub">시각은 미국 동부 시각</span></div>
+    <div class="charthead"><h2 id="ctitle"></h2><span class="sub">시각은 그 시장의 현지 시각</span></div>
     <div class="pane" id="c-price"></div>
     <div class="pane" id="c-rsi"><span>RSI</span></div>
     <div class="pane" id="c-macd"><span>MACD · 시그널 · 히스토그램</span></div>
@@ -87,11 +104,13 @@
 const $ = s => document.querySelector(s);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 let cfg = {}, selected = null, rows = {}, charts = null;
+const TREND_EPS = 0.05;  // 텍스트 버전과 같다
 
 const f = (v, d = 2) => v == null ? "-" : v.toFixed(d);
 const sgn = (v, d = 4) => v == null ? "-" : (v >= 0 ? "+" : "") + v.toFixed(d);
-const priceDigits = p => p >= 100 ? 2 : 4;
-const usTime = t => t ? `${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}` : "";
+const fmtPrice = (p, krx) => p == null ? "-" : krx ? p.toLocaleString("ko-KR") : p.toFixed(p >= 100 ? 2 : 4);
+const hms = t => t ? `${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}` : "";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function setStatus(s) {
   const el = $("#status");
@@ -99,23 +118,37 @@ function setStatus(s) {
   el.className = "pill " + (s === "실시간" ? "ok" : /끊김|이미/.test(s) ? "bad" : "");
 }
 
+function setMsg(s, err) {
+  $("#msg").textContent = s;
+  $("#msg").className = "sub" + (err ? " err" : "");
+}
+
 function rsiCell(r) {
-  if (r == null) return "-";
-  const cls = r <= cfg.lower ? "cold" : r >= cfg.upper ? "hot" : "";
+  if (r.rsi == null) return "-";
+  const v = r.rsi;
+  const cls = v <= cfg.lower ? "cold" : v >= cfg.upper ? "hot" : "";
+  let trend = '<span class="trend dim">—</span>';
+  if (r.rsi_prev != null) {
+    const d = v - r.rsi_prev;
+    if (d > TREND_EPS) trend = '<span class="trend up">▲</span>';
+    else if (d < -TREND_EPS) trend = '<span class="trend down">▼</span>';
+  }
   return `<span class="rsi"><span class="gauge"><b style="left:${cfg.lower}%;width:${cfg.upper - cfg.lower}%"></b>` +
-         `<i style="left:calc(${Math.max(0, Math.min(100, r))}% - 1px)"></i></span><span class="${cls}">${f(r)}</span></span>`;
+         `<i style="left:calc(${Math.max(0, Math.min(100, v))}% - 1px)"></i></span>` +
+         `<span class="${cls}">${f(v)}</span>${trend}</span>`;
 }
 
 function cells(r) {
-  const d = priceDigits(r.price || 0);
+  const krx = r.excd === "KRX";
+  const d = krx ? 1 : 4;
   return [
-    `${r.symb}<small>${r.excd}</small>`,
-    r.price == null ? "-" : r.price.toFixed(d),
+    krx ? esc(r.name) : r.symb,
+    fmtPrice(r.price, krx),
     r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
-    rsiCell(r.rsi),
-    sgn(r.macd), sgn(r.signal),
-    `<span class="${r.hist >= 0 ? "pos" : "neg"}">${sgn(r.hist)}</span>`,
-    usTime(r.us_time),
+    rsiCell(r),
+    sgn(r.macd, d), sgn(r.signal, d),
+    `<span class="${r.hist >= 0 ? "pos" : "neg"}">${sgn(r.hist, d)}</span>`,
+    hms(r.time),
   ];
 }
 
@@ -125,23 +158,31 @@ function renderRow(r) {
   if (!tr) {
     tr = document.createElement("tr");
     tr.id = "r-" + r.symb;
-    tr.innerHTML = c.map((x, i) => `<td class="${i ? "" : "sym"}">${x}</td>`).join("");
+    tr.title = r.excd === "KRX" ? `${r.name} · ${r.symb}` : `${r.excd}:${r.symb}`;
+    tr.innerHTML = c.map((x, i) => `<td class="${i ? "" : "sym"}">${x}</td>`).join("") +
+                   `<td class="del"><button title="빼기">✕</button></td>`;
     tr.onclick = () => select(r.symb);
+    tr.querySelector(".del button").onclick = e => { e.stopPropagation(); removeTicker(r.symb); };
     $("#rows").appendChild(tr);
+    if (r.symb === selected) tr.classList.add("sel");
   } else {
-    [...tr.children].forEach((td, i) => {
-      if (td.innerHTML !== c[i]) {
-        td.innerHTML = c[i];
-        if (i === 1 || i === 3) { td.classList.remove("flash"); void td.offsetWidth; td.classList.add("flash"); }
-      }
-    });
+    c.forEach((x, i) => { const td = tr.children[i]; if (td.innerHTML !== x) td.innerHTML = x; });
   }
   rows[r.symb] = r;
 }
 
+function dropRow(symb) {
+  document.getElementById("r-" + symb)?.remove();
+  delete rows[symb];
+  if (selected === symb) {
+    const first = Object.keys(rows)[0];
+    if (first) select(first); else clearChart();
+  }
+}
+
 function makeCharts() {
   const base = {
-    layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: 11 },
+    layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: 10 },
     grid: { vertLines: { color: css("--line") }, horzLines: { color: css("--line") } },
     rightPriceScale: { borderColor: css("--line"), minimumWidth: 70 },
     timeScale: { borderColor: css("--line"), timeVisible: true, secondsVisible: false },
@@ -161,7 +202,7 @@ function makeCharts() {
   };
   s.rsi.createPriceLine({ price: cfg.upper, color: css("--hot"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
   s.rsi.createPriceLine({ price: cfg.lower, color: css("--cold"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
-  rsi.priceScale("right").applyOptions({ autoScale: false, scaleMargins: { top: 0.05, bottom: 0.05 } });
+  rsi.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.06 } });
   s.rsi.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
   price.timeScale().applyOptions({ visible: false });
   rsi.timeScale().applyOptions({ visible: false });
@@ -175,14 +216,26 @@ function makeCharts() {
 
 const histPt = p => p.value == null ? p : ({ time: p.time, value: p.value, color: p.value >= 0 ? css("--pos") : css("--neg") });
 
+function clearChart() {
+  selected = null;
+  $("#ctitle").textContent = "종목을 더하면 차트가 나온다";
+  if (charts) Object.values(charts.s).forEach(x => x.setData([]));
+}
+
 async function select(symb) {
+  if (!symb) return clearChart();
   selected = symb;
   document.querySelectorAll("tbody tr").forEach(tr => tr.classList.toggle("sel", tr.id === "r-" + symb));
-  $("#ctitle").textContent = `${symb} · ${cfg.nmin}분봉`;
-  const d = await (await fetch("/api/chart/" + symb)).json();
-  if (selected !== symb) return;
+  const r = rows[symb];
+  $("#ctitle").textContent = `${r && r.excd === "KRX" ? r.name : symb} · ${cfg.nmin}분봉`;
+  const res = await fetch("/api/chart/" + symb);
+  if (!res.ok || selected !== symb) return;
+  const d = await res.json();
   if (!charts) charts = makeCharts();
   const s = charts.s;
+  const krx = r && r.excd === "KRX";
+  s.candle.applyOptions({ priceFormat: krx ? { type: "price", precision: 0, minMove: 1 }
+                                           : { type: "price", precision: 2, minMove: 0.01 } });
   s.candle.setData(d.bars);
   s.rsi.setData(d.rsi);
   s.macd.setData(d.macd);
@@ -202,14 +255,43 @@ function pushChart(r) {
   s.hist.update(histPt({ time: t, value: r.hist }));
 }
 
+$("#add").onsubmit = async e => {
+  e.preventDefault();
+  const t = $("#ticker").value.trim();
+  if (!t) return;
+  $("#addbtn").disabled = true;
+  setMsg(`${t} 찾는 중…`);
+  try {
+    const res = await fetch("/api/tickers", { method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ ticker: t }) });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.detail || res.statusText);
+    $("#ticker").value = "";
+    setMsg(`${j.symb} 더했다`);
+    select(j.symb);
+  } catch (err) {
+    setMsg(err.message, true);
+  } finally {
+    $("#addbtn").disabled = false;
+    $("#ticker").focus();
+  }
+};
+
+async function removeTicker(symb) {
+  const res = await fetch("/api/tickers/" + encodeURIComponent(symb), { method: "DELETE" });
+  if (res.ok) { dropRow(symb); setMsg(`${symb} 뺐다`); }
+  else setMsg(`${symb} 빼지 못했다`, true);
+}
+
 async function loadState() {
   const st = await (await fetch("/api/state")).json();
   cfg = st;
   $("#sub").textContent = `${st.nmin}분봉 · RSI(${st.period}) · MACD(12,26,9)`;
   setStatus(st.status);
+  $("#rows").innerHTML = ""; rows = {};
   st.rows.forEach(renderRow);
-  let want = null;
-  try { want = localStorage.getItem("sel"); } catch (e) {}
+  let want = selected;
+  if (!want) try { want = localStorage.getItem("sel"); } catch (e) {}
   select(rows[want] ? want : st.rows[0]?.symb);
 }
 
@@ -217,7 +299,9 @@ function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
-    if (m.type === "rows") m.rows.forEach(r => { renderRow(r); pushChart(r); });
+    if (m.type === "rows") m.rows.forEach(r => { if (rows[r.symb]) { renderRow(r); pushChart(r); } });
+    else if (m.type === "add") renderRow(m.row);
+    else if (m.type === "remove") dropRow(m.symb);
     else if (m.type === "status") setStatus(m.status);
     else if (m.type === "reload") loadState();
   };

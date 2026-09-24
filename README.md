@@ -1,8 +1,8 @@
 # KoreaInvestment RSI Monitor
 
-**한국투자증권 Open API 로 미국주식 분봉과 실시간 체결가를 받아서, RSI 와 MACD 를 실시간으로 보여준다.**
+**한국투자증권 Open API 로 미국·국내 주식 분봉과 실시간 체결가를 받아서, RSI 와 MACD 를 실시간으로 보여준다.**
 
-<sub>Live RSI and MACD for US stocks, computed from Korea Investment & Securities (KIS) Open API minute bars and trade feed. Korean UI.</sub>
+<sub>Live RSI and MACD for US and Korean stocks, computed from Korea Investment & Securities (KIS) Open API minute bars and trade feed. Korean UI.</sub>
 
 - **1단계 (지금)** — 분봉과 실시간 체결가로 RSI·MACD 를 계산해서 보여준다.
 - **2단계** — [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_monitor) 처럼 선을 넘으면 소리·텔레그램으로 알린다.
@@ -45,11 +45,17 @@ export KIS_APPKEY=앱키 KIS_APPSECRET=시크릿
 ### 웹 화면
 
 ```bash
-python kis_web.py TSLA SOXL MU FCEL
+python kis_web.py TSLA SOXL 005930      # 처음 한 번 종목을 적어 띄운다
+python kis_web.py                       # 다음부터는 저장된 목록으로 뜬다
 ```
 
 브라우저에서 http://localhost:8000 을 연다. 위에는 종목 표, 아래에는 고른 종목의 5분봉 차트와
 RSI·MACD 가 나온다. 표에서 종목을 누르면 차트가 바뀐다. 값은 체결이 올 때마다 0.5초 간격으로 고쳐진다.
+
+- **종목 더하기·빼기** — 표 위 칸에 적고 추가를 누른다. 미국은 `TSLA`, 거래소를 정하려면 `NYS:BE`,
+  국내는 종목코드 여섯 자리(`005930`)다. 줄에 마우스를 올리면 오른쪽 끝에 ✕ 가 나온다.
+  목록은 `kis_watchlist.json` 에 저장돼서 서버를 다시 켜도 남는다. 40개까지 된다.
+- **RSI 옆 ▲▼** — 앞 봉이 닫힐 때의 RSI 보다 0.05 넘게 오르면 ▲, 내리면 ▼ 다.
 
 - 서버 하나가 한국투자증권 실시간 연결을 잡고 브라우저 여러 개에 나눠 준다. 탭을 여러 개 열어도 된다.
 - 연결이 끊기면 5초 뒤 다시 붙고, 그 사이 놓친 체결을 메우려고 분봉을 새로 받는다.
@@ -141,6 +147,9 @@ Webull 값은 [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_mon
 
 ## 알아둘 것
 
+- **국내 종목은 1분봉을 모아 5분봉을 만든다.** 국내 분봉 API 는 1분봉만 한 번에 120개씩 주기 때문이다.
+  분봉에는 넥스트레이드 애프터마켓(~20:00)까지 들어오지만, 실시간 체결은 KRX(H0STCNT0)만 받는다.
+- **런던·독일 상장 종목(DRM3 같은 것)은 안 된다.** 한국투자증권 해외 시세는 미국·홍콩·중국·일본·베트남만 준다.
 - **실시간 연결은 앱키 하나에 하나뿐이다.** `watch` 를 켜 둔 채 다른 창에서 `live` 나 `rsi` 를 켜면
   `ALREADY IN USE appkey` 로 거절된다. 종목은 한 연결에 여러 개 넣으면 된다.
 - **거래소는 알아서 찾는다.** 종목만 적으면 나스닥 → 뉴욕 → 아멕스 순서로 찾아보고

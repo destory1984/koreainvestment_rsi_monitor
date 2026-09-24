@@ -13,9 +13,10 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -34,9 +35,21 @@ WS = "ws://ops.koreainvestment.com:21000/tryitout"
 EXCHANGES = ("NAS", "NYS", "AMS")
 
 # HDFSCNT0 (해외주식 실시간체결가) 필드 순서
-LIVE_FIELDS = ["RSYM", "SYMB","ZDIV", "TYMD", "XYMD", "XHMS", "KYMD", "KHMS", "OPEN", "HIGH",
+US_TR, KR_TR = "HDFSCNT0", "H0STCNT0"
+LIVE_FIELDS = ["RSYM", "SYMB", "ZDIV", "TYMD", "XYMD", "XHMS", "KYMD", "KHMS", "OPEN", "HIGH",
                "LOW", "LAST", "SIGN", "DIFF", "RATE", "PBID", "PASK", "VBID", "VASK",
                "EVOL", "TVOL", "TAMT", "BIVL", "ASVL", "STRN", "MTYP"]
+# H0STCNT0 (국내주식 실시간체결가, KRX) 필드 순서
+KR_FIELDS = ["MKSC_SHRN_ISCD", "STCK_CNTG_HOUR", "STCK_PRPR", "PRDY_VRSS_SIGN", "PRDY_VRSS",
+             "PRDY_CTRT", "WGHN_AVRG_STCK_PRC", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "ASKP1",
+             "BIDP1", "CNTG_VOL", "ACML_VOL", "ACML_TR_PBMN", "SELN_CNTG_CSNU", "SHNU_CNTG_CSNU",
+             "NTBY_CNTG_CSNU", "CTTR", "SELN_CNTG_SMTN", "SHNU_CNTG_SMTN", "CCLD_DVSN", "SHNU_RATE",
+             "PRDY_VOL_VRSS_ACML_VOL_RATE", "OPRC_HOUR", "OPRC_VRSS_PRPR_SIGN", "OPRC_VRSS_PRPR",
+             "HGPR_HOUR", "HGPR_VRSS_PRPR_SIGN", "HGPR_VRSS_PRPR", "LWPR_HOUR", "LWPR_VRSS_PRPR_SIGN",
+             "LWPR_VRSS_PRPR", "BSOP_DATE", "NEW_MKOP_CLS_CODE", "TRHT_YN", "ASKP_RSQN1", "BIDP_RSQN1",
+             "TOTAL_ASKP_RSQN", "TOTAL_BIDP_RSQN", "VOL_TNRT", "PRDY_SMNS_HOUR_ACML_VOL",
+             "PRDY_SMNS_HOUR_ACML_VOL_RATE", "HOUR_CLS_CODE", "MRKT_TRTM_CLS_CODE", "VI_STND_PRC"]
+KR_INFO = {}  # 종목코드 -> {"name", "price", "rate"} (국내 분봉을 받을 때 채운다)
 
 
 def load_keys():
@@ -72,7 +85,9 @@ def get_approval_key(appkey, secret):
 
 
 def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120):
-    """해외주식분봉조회 (HHDFS76950200). 최신 것부터 온다."""
+    """해외주식분봉조회 (HHDFS76950200). 최신 것부터 온다. 국내 종목은 fetch_kr_bars 로 넘긴다."""
+    if excd == "KRX":
+        return fetch_kr_bars(appkey, secret, symb, nmin)
     token = get_token(appkey, secret)
     r = requests.get(f"{REST}/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice",
                      headers={"authorization": f"Bearer {token}", "appkey": appkey,
@@ -95,8 +110,59 @@ def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120):
     return list(reversed(bars))
 
 
+def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
+    """국내주식 1분봉(FHKST03010230, 한 번에 120개)을 거슬러 받아 nmin 분봉으로 묶는다."""
+    token = get_token(appkey, secret)
+    now = datetime.now()
+    date, hour = now.strftime("%Y%m%d"), "200000"
+    mins = []
+    for _ in range(need * nmin // 120 + 3):
+        r = requests.get(f"{REST}/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+                         headers={"authorization": f"Bearer {token}", "appkey": appkey,
+                                  "appsecret": secret, "tr_id": "FHKST03010230", "custtype": "P"},
+                         params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+                                 "FID_INPUT_HOUR_1": hour, "FID_INPUT_DATE_1": date,
+                                 "FID_PW_DATA_INCU_YN": "Y", "FID_FAKE_TICK_INCU_YN": ""},
+                         timeout=10)
+        r.raise_for_status()
+        j = r.json()
+        if j.get("rt_cd") != "0":
+            raise RuntimeError(f"KRX:{code} {j.get('msg_cd')} {j.get('msg1')}")
+        o1 = j.get("output1") or {}
+        if o1.get("hts_kor_isnm") and code not in KR_INFO:
+            KR_INFO[code] = {"name": o1["hts_kor_isnm"], "price": float(o1["stck_prpr"]),
+                             "rate": float(o1["prdy_ctrt"])}
+        page = [b for b in j.get("output2") or [] if b.get("stck_prpr")]
+        if not page:
+            break
+        mins += page
+        last = page[-1]  # 가장 이른 것
+        t = datetime.strptime(last["stck_bsop_date"] + last["stck_cntg_hour"], "%Y%m%d%H%M%S")
+        t = t.replace(second=0) - timedelta(minutes=1)
+        date, hour = t.strftime("%Y%m%d"), t.strftime("%H%M%S")
+        if len({bar_start(b["stck_bsop_date"], b["stck_cntg_hour"], nmin) for b in mins}) > need:
+            break
+        time.sleep(0.1)
+    bars = {}
+    for b in reversed(mins):  # 이른 것부터
+        k = bar_start(b["stck_bsop_date"], b["stck_cntg_hour"], nmin)
+        o, h, l, c = (float(b[x]) for x in ("stck_oprc", "stck_hgpr", "stck_lwpr", "stck_prpr"))
+        v = int(b["cntg_vol"] or 0)
+        if k not in bars:
+            bars[k] = {"time_us": k, "open": o, "high": h, "low": l, "close": c, "volume": v}
+        else:
+            x = bars[k]
+            x["high"], x["low"], x["close"] = max(x["high"], h), min(x["low"], l), c
+            x["volume"] += v
+    return [bars[k] for k in sorted(bars)][-need:]
+
+
 def resolve(appkey, secret, ticker):
-    """'NYS:BE' 는 그대로, 'BE' 는 나스닥→뉴욕→아멕스 순으로 찾아서 기억해 둔다."""
+    """'NYS:BE' 는 그대로, 'BE' 는 나스닥→뉴욕→아멕스 순으로 찾아서 기억해 둔다.
+    숫자 여섯 자리('005930')나 'KRX:005930' 은 국내 종목이다."""
+    t = ticker.strip().upper()
+    if re.fullmatch(r"(KRX:)?\d{6}", t):
+        return "KRX", t[-6:]
     if ":" in ticker:
         excd, symb = ticker.upper().split(":", 1)
         return excd, symb
@@ -113,7 +179,7 @@ def resolve(appkey, secret, ticker):
         except RuntimeError:
             pass
         time.sleep(0.1)
-    sys.exit(f"{symb}: 어느 거래소에서도 못 찾았다. NAS:{symb} 처럼 직접 적을 것.")
+    raise LookupError(f"{symb}: 어느 거래소에서도 못 찾았다. NAS:{symb} 처럼 직접 적을 것.")
 
 
 def cmd_bars(args):
@@ -153,8 +219,17 @@ def bar_start(ymd, hms, nmin):
 
 def print_tick(d):
     print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {float(d['LAST']):>10.4f}  "
-          f"{float(d['RATE']):>+6.2f}%  체결 {d['EVOL']:>6}  누적 {d['TVOL']}  "
-          f"(미국 {d['XHMS']})", flush=True)
+          f"{float(d['RATE']):>+6.2f}%  체결 {d['EVOL']:>6}  누적 {d.get('TVOL', '')}  "
+          f"(현지 {d['XHMS']})", flush=True)
+
+
+def normalize(tr_id, rec):
+    """국내 체결을 해외 체결과 같은 이름으로 맞춘다. Book 은 SYMB·LAST·RATE·EVOL·XYMD·XHMS 만 본다."""
+    if tr_id == US_TR:
+        return rec
+    return {"SYMB": rec["MKSC_SHRN_ISCD"], "LAST": rec["STCK_PRPR"], "RATE": rec["PRDY_CTRT"],
+            "EVOL": rec["CNTG_VOL"], "TVOL": rec["ACML_VOL"], "XYMD": rec["BSOP_DATE"],
+            "XHMS": rec["STCK_CNTG_HOUR"]}
 
 
 class KisInUse(Exception):
@@ -165,21 +240,33 @@ class KisInUse(Exception):
                 "다른 창의 kis_rsi.py / kis_web.py 를 끄고 다시 할 것.")
 
 
-async def live(approval_key, keys, on_tick=print_tick):
+async def subscribe(ws, approval_key, key, on=True):
+    """실시간 체결가 구독(on) 또는 해지. 연결 하나에 41개까지 넣을 수 있다.
+    key 는 해외면 'DNASTSLA' 같은 문자열, 국내면 ('H0STCNT0', '005930')."""
+    tr_id, tr_key = key if isinstance(key, tuple) else (US_TR, key)
+    await ws.send(json.dumps({
+        "header": {"approval_key": approval_key, "custtype": "P",
+                   "tr_type": "1" if on else "2", "content-type": "utf-8"},
+        "body": {"input": {"tr_id": tr_id, "tr_key": tr_key}}}))
+
+
+async def live(approval_key, keys, on_tick=print_tick, on_open=None):
+    """on_open(ws) 을 주면 연결 직후 불러 준다. 연결 중에 구독을 넣고 빼려면 그 ws 를 쓴다."""
     import websockets
     async with websockets.connect(WS, ping_interval=None) as ws:
         for k in keys:
-            await ws.send(json.dumps({
-                "header": {"approval_key": approval_key, "custtype": "P",
-                           "tr_type": "1", "content-type": "utf-8"},
-                "body": {"input": {"tr_id": "HDFSCNT0", "tr_key": k}}}))
+            await subscribe(ws, approval_key, k)
+        if on_open:
+            on_open(ws)
         async for msg in ws:
             if msg[0] in "01":  # 데이터: 암호화|TR|건수|필드^필드^...
                 _, tr_id, count, data = msg.split("|", 3)
-                vals = data.split("^")
-                n = len(LIVE_FIELDS)
-                for i in range(int(count)):
-                    on_tick(dict(zip(LIVE_FIELDS, vals[i * n:(i + 1) * n])))
+                fields = KR_FIELDS if tr_id == KR_TR else LIVE_FIELDS
+                vals, count, n = data.split("^"), int(count), len(fields)
+                skip = 1 if len(vals) == count * (n + 1) else 0  # 앞에 구독 키가 한 칸 더 붙어 오면
+                for i in range(count):
+                    rec = vals[i * (n + skip) + skip:(i + 1) * (n + skip)]
+                    on_tick(normalize(tr_id, dict(zip(fields, rec))))
                 continue
             j = json.loads(msg)
             if j["header"]["tr_id"] == "PINGPONG":
@@ -227,13 +314,15 @@ class Book:
 
     def __init__(self, excd, symb, bars, nmin):
         self.excd, self.symb, self.bars, self.nmin = excd, symb, bars, nmin
-        self.price = bars[-1]["close"] if bars else None
-        self.rate = None
+        info = KR_INFO.get(symb, {}) if excd == "KRX" else {}
+        self.name = info.get("name", symb)
+        self.price = info.get("price") or (bars[-1]["close"] if bars else None)
+        self.rate = info.get("rate")
         self.us_time = ""
 
     @property
     def key(self):
-        return f"D{self.excd}{self.symb}"
+        return (KR_TR, self.symb) if self.excd == "KRX" else f"D{self.excd}{self.symb}"
 
     def on_tick(self, d):
         """체결 하나를 반영한다. 새 봉이 생기면 True."""
@@ -260,7 +349,9 @@ class Book:
     def indicators(self, period=14):
         closes = [b["close"] for b in self.bars[-400:]]
         line, sig, hist = macd_series(closes)
-        return {"rsi": rsi_series(closes, period)[-1],
+        rsi = rsi_series(closes, period)
+        # rsi_prev 는 앞 봉이 닫힐 때의 RSI. 지금 RSI 와 견줘 오르는지 내리는지 본다
+        return {"rsi": rsi[-1], "rsi_prev": rsi[-2] if len(rsi) > 1 else None,
                 "macd": line[-1], "signal": sig[-1], "hist": hist[-1]}
 
 
@@ -297,7 +388,7 @@ def cmd_rsi(args):
     """종목마다 한 줄씩, RSI 가 --step 이상 바뀌거나 MACD 가 시그널을 건널 때 찍는다."""
     appkey, secret, books = load_books(args.tickers, args.min)
     for book in books.values():
-        print(f"\n{book.excd}:{book.symb} {args.min}분봉  봉 {len(book.bars)}개 (미국시각)")
+        print(f"\n{book.excd}:{book.symb} {args.min}분봉  봉 {len(book.bars)}개 (현지 시각)")
         closes = [b["close"] for b in book.bars]
         r = rsi_series(closes, args.period)
         line, sig, hist = macd_series(closes)
@@ -343,6 +434,9 @@ def cmd_watch(args):
             r = ind["rsi"]
             rsi = "-" if r is None else (f"[bold cyan]{r:.2f}[/]" if r <= args.lower else
                                          f"[bold red]{r:.2f}[/]" if r >= args.upper else f"{r:.2f}")
+            p = ind["rsi_prev"]
+            if r is not None and p is not None:  # 앞 봉이 닫힐 때보다 오르면 ▲, 내리면 ▼
+                rsi += " [red]▲[/]" if r - p > 0.05 else " [bright_blue]▼[/]" if r - p < -0.05 else " [dim]—[/]"
             hc = "green" if ind["hist"] > 0 else "red"
             rate = "" if b.rate is None else f"[{'green' if b.rate >= 0 else 'red'}]{b.rate:+.2f}%[/]"
             us = f"{b.us_time[:2]}:{b.us_time[2:4]}:{b.us_time[4:]}" if b.us_time else ""
@@ -388,7 +482,10 @@ def main():
     w.add_argument("--upper", type=float, default=70, help="이 위면 RSI 를 빨갛게 (기본 70)")
     w.set_defaults(func=cmd_watch)
     args = p.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except LookupError as e:
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":
