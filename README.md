@@ -55,6 +55,28 @@ python kis_web.py TSLA SOXL 005930
 브라우저가 저절로 http://localhost:8000 을 연다. 다음부터는 종목 없이 `python kis_web.py` 만 하면
 저장된 목록으로 뜬다.
 
+### 5. 목소리 준비 (골라서)
+
+알림 목소리는 두 가지 중 하나다. **어느 쪽도 키가 필요 없다.**
+
+**윈도우 음성 (기본)** — 아무것도 안 해도 된다. 윈도우에 들어 있는 한국어 음성(Heami)으로 읽는다.
+한국어 음성이 없으면 윈도우 설정 → 시간 및 언어 → 음성 → 음성 추가에서 한국어를 더한다.
+
+**로컬 TTS (더 자연스러움)** — 이 PC 의 GPU 에서 Qwen3-TTS 1.7B(화자 Sohee)를 돌린다.
+NVIDIA GPU 에 VRAM 이 8GB 남짓 비어 있어야 한다. 모델(약 4.3GB)은 처음 켤 때 Hugging Face 에서
+저절로 받는다. 공개 모델이라 Hugging Face 가입이나 토큰은 필요 없다.
+
+```bash
+python -m venv .venv_tts
+.venv_tts/Scripts/pip install torch --index-url https://download.pytorch.org/whl/cu124
+.venv_tts/Scripts/pip install qwen-tts soundfile
+.venv_tts/Scripts/python tts_server.py
+```
+
+`준비됨: http://127.0.0.1:47650` 이 나오면 된 것이다. 이 창은 켜 둔 채로 다른 창에서 `python kis_web.py` 를 띄운다.
+웹 서버가 알림 문장을 미리 만들어 `tts_cache/` 에 쌓는다(문장 하나에 7초쯤, 종목 하나에 넷). 한 번 만든 문장은
+TTS 서버를 꺼도 파일로 울린다. 만들어 두지 않은 문장만 윈도우 음성으로 넘어간다.
+
 ## 인터넷에 띄우지 않는 이유
 
 이 화면을 서버 하나에 띄워 두고 여러 사람이 들어와 보게 할 수도 있다. 기술로는 어렵지 않다.

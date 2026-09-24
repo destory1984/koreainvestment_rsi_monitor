@@ -10,3 +10,4 @@ kis_exchange.json
 kis_watchlist.json
 kis_settings.json
 tts_cache/
+.venv*/
