@@ -3,6 +3,7 @@
     python kis_us.py bars TSLA              # 5분봉 (오늘+전일, 최근 120개)
     python kis_us.py bars NYS:BE --min 1    # 거래소를 직접 적을 수도 있다
     python kis_us.py live TSLA SOXL         # 실시간 체결가 (Ctrl+C 로 끝)
+    python kis_us.py rsi TSLA SOXL          # 5분봉 RSI(14) 를 실시간으로
 
 키는 kis_config.json (저장소에 안 올라감) 이나 환경변수 KIS_APPKEY / KIS_APPSECRET 에 둔다.
     {"appkey": "...", "appsecret": "..."}
@@ -126,7 +127,36 @@ def cmd_bars(args):
         time.sleep(0.1)
 
 
-async def live(approval_key, keys):
+def rsi_series(closes, period=14):
+    """와일더 RSI. 처음 period 개는 산술평균, 그 뒤로는 (앞 평균*(period-1) + 이번 값)/period."""
+    out = [None] * len(closes)
+    if len(closes) <= period:
+        return out
+    ups = [max(closes[i] - closes[i - 1], 0) for i in range(1, len(closes))]
+    downs = [max(closes[i - 1] - closes[i], 0) for i in range(1, len(closes))]
+    au, ad = sum(ups[:period]) / period, sum(downs[:period]) / period
+    for i in range(period, len(ups) + 1):
+        if i > period:
+            au = (au * (period - 1) + ups[i - 1]) / period
+            ad = (ad * (period - 1) + downs[i - 1]) / period
+        out[i] = 100.0 if ad == 0 else 100 - 100 / (1 + au / ad)
+    return out
+
+
+def bar_start(ymd, hms, nmin):
+    """미국 시각 체결 시점을 그 체결이 들어갈 봉의 시작 시각('YYYYMMDD HHMMSS')으로."""
+    h, m = int(hms[:2]), int(hms[2:4])
+    m -= m % nmin
+    return f"{ymd} {h:02d}{m:02d}00"
+
+
+def print_tick(d):
+    print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {float(d['LAST']):>10.4f}  "
+          f"{float(d['RATE']):>+6.2f}%  체결 {d['EVOL']:>6}  누적 {d['TVOL']}  "
+          f"(미국 {d['XHMS']})", flush=True)
+
+
+async def live(approval_key, keys, on_tick=print_tick):
     import websockets
     async with websockets.connect(WS, ping_interval=None) as ws:
         for k in keys:
@@ -140,10 +170,7 @@ async def live(approval_key, keys):
                 vals = data.split("^")
                 n = len(LIVE_FIELDS)
                 for i in range(int(count)):
-                    d = dict(zip(LIVE_FIELDS, vals[i * n:(i + 1) * n]))
-                    print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {float(d['LAST']):>10.4f}  "
-                          f"{float(d['RATE']):>+6.2f}%  체결 {d['EVOL']:>6}  누적 {d['TVOL']}  "
-                          f"(미국 {d['XHMS']})", flush=True)
+                    on_tick(dict(zip(LIVE_FIELDS, vals[i * n:(i + 1) * n])))
                 continue
             j = json.loads(msg)
             if j["header"]["tr_id"] == "PINGPONG":
@@ -166,6 +193,53 @@ def cmd_live(args):
         pass
 
 
+def cmd_rsi(args):
+    """분봉으로 RSI 를 잡아 두고, 실시간 체결가로 진행 중인 봉의 종가를 바꿔 가며 다시 계산한다."""
+    appkey, secret = load_keys()
+    books = {}  # SYMB -> 봉 목록
+    for t in args.tickers:
+        excd, symb = resolve(appkey, secret, t)
+        bars = fetch_bars(appkey, secret, excd, symb, args.min)
+        books[symb] = {"excd": excd, "bars": bars, "shown": None}
+        r = rsi_series([b["close"] for b in bars], args.period)
+        print(f"\n{excd}:{symb} {args.min}분봉 RSI({args.period})  봉 {len(bars)}개 (미국시각)")
+        for b, v in list(zip(bars, r))[-args.n:]:
+            print(f"  {b['time_us']}  C {b['close']:>9.4f}  RSI {v:>6.2f}" if v is not None
+                  else f"  {b['time_us']}  C {b['close']:>9.4f}  RSI    -")
+        time.sleep(0.1)
+    if args.once:
+        return
+
+    def on_tick(d):
+        book = books.get(d["SYMB"])
+        if not book:
+            return
+        bars, price = book["bars"], float(d["LAST"])
+        start = bar_start(d["XYMD"], d["XHMS"], args.min)
+        if not bars or start > bars[-1]["time_us"]:
+            bars.append({"time_us": start, "open": price, "high": price, "low": price,
+                         "close": price, "volume": 0})
+            print(f"--- {d['SYMB']} 새 봉 {start}", flush=True)
+        elif start < bars[-1]["time_us"]:
+            return  # 늦게 온 체결
+        b = bars[-1]
+        b["close"], b["high"], b["low"] = price, max(b["high"], price), min(b["low"], price)
+        b["volume"] += int(d["EVOL"] or 0)
+        v = rsi_series([x["close"] for x in bars[-(args.period * 20):]], args.period)[-1]
+        if v is None or (book["shown"] is not None and abs(v - book["shown"]) < args.step):
+            return
+        book["shown"] = v
+        print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {price:>10.4f}  RSI {v:>6.2f}  "
+              f"(미국 {d['XHMS']})", flush=True)
+
+    keys = [f"D{b['excd']}{s}" for s, b in books.items()]
+    print("\n구독:",", ".join(keys))
+    try:
+        asyncio.run(live(get_approval_key(appkey, secret), keys, on_tick))
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     p = argparse.ArgumentParser(description="한국투자증권 API 미국주식 분봉·실시간")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -180,6 +254,15 @@ def main():
     l.add_argument("--prefix", default="D",
                    help="D=정규장·프리/애프터 (무료 실시간), R=주간거래 (R+BAQ 같은 거래소 코드 필요)")
     l.set_defaults(func=cmd_live)
+    r = sub.add_parser("rsi", help="분봉 RSI + 실시간 갱신")
+    r.add_argument("tickers", nargs="+")
+    r.add_argument("--min", type=int, default=5, help="분 단위 (기본 5)")
+    r.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
+    r.add_argument("-n", type=int, default=5, help="처음에 보여줄 봉 수 (기본 5)")
+    r.add_argument("--step", type=float, default=0.1,
+                   help="RSI 가 이만큼 바뀌어야 새로 찍는다 (기본 0.1)")
+    r.add_argument("--once", action="store_true", help="분봉 RSI 만 보고 끝내기")
+    r.set_defaults(func=cmd_rsi)
     args = p.parse_args()
     args.func(args)
 
