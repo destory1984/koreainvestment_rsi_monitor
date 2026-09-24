@@ -6,13 +6,14 @@
 
 서버 하나가 한국투자증권 실시간 연결을 잡고, 브라우저 여러 개에 값을 나눠 준다.
 종목은 화면에서 더하고 뺄 수 있고, kis_watchlist.json 에 저장된다.
-브라우저를 닫아도 서버는 계속 돈다 (2단계 알림은 여기에 붙는다).
+RSI 가 35/65, 30/70 을 넘으면 서버가 말로 알린다 (kis_alert.py). 브라우저를 닫아도 알림은 계속 나간다.
 """
 import argparse
 import asyncio
 import calendar
 import json
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -20,19 +21,28 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
+import kis_alert as al
 import kis_rsi as k
 
 HERE = Path(__file__).parent
 STATIC = HERE / "static"
 WATCHLIST = HERE / "kis_watchlist.json"
+SETTINGS = HERE / "kis_settings.json"
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
 
 
 class Hub:
-    def __init__(self, tickers, nmin, period, lower, upper):
+    def __init__(self, tickers, nmin, period, tts_cache):
         self.tickers, self.nmin, self.period = tickers, nmin, period
-        self.lower, self.upper = lower, upper
         self.books = {}
+        self.gates = {}           # 종목 -> 알림 상태
+        self.events = deque(maxlen=30)
+        self.voice = al.Voice(tts_cache)
+        try:
+            self.settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
+        except Exception:
+            self.settings = {}
+        self.settings.setdefault("sound", True)
         self.clients = set()
         self.dirty = set()
         self.status = "시작 중"
@@ -54,6 +64,20 @@ class Hub:
             except Exception as e:
                 print(f"{t}: 건너뜀 — {e}", flush=True)
         self.save()
+        if self.settings["sound"]:
+            self.voice.greet()
+        self.prefetch(list(self.books.values()))
+
+    def prefetch(self, books):
+        texts = [al.TTS_GREETING, al.TTS_GREETING_AGAIN]
+        for b in books:
+            texts += al.phrases(b.name, b.symb)
+        missing = sum(not self.voice.cached(t) for t in texts)
+        if missing:
+            print(f"알림 문장 {missing}개를 로컬 TTS 로 만드는 중", flush=True)
+            self.voice.prefetch(texts, lambda made, n: print(
+                f"알림 문장 {made}/{n}개 만듦" + ("" if made == n else f" — {self.voice.last_error}"),
+                flush=True))
 
     def _add(self, ticker):
         """종목을 찾아 분봉을 받는다 (블로킹). 이미 있으면 그 종목을 돌려준다."""
@@ -67,6 +91,7 @@ class Hub:
             raise ValueError(f"{symb}: 분봉이 없다.")
         book = k.Book(excd, symb, bars, self.nmin)
         self.books[symb] = book
+        self.gates[symb] = al.Gate()
         time.sleep(0.1)
         return book, True
 
@@ -78,6 +103,7 @@ class Hub:
             self.save()
             if self.ws:
                 await k.subscribe(self.ws, self.approval_key, book.key)
+        self.prefetch([book])
         await self.broadcast({"type": "add", "row": self.row(book)})
         return book
 
@@ -86,6 +112,7 @@ class Hub:
             book = self.books.pop(symb, None)
             if not book:
                 raise KeyError(symb)
+            self.gates.pop(symb, None)
             self.save()
             self.dirty.discard(symb)
             if self.ws:
@@ -139,6 +166,37 @@ class Hub:
                 self.set_status(f"연결 끊김 ({type(e).__name__}) — 5초 뒤 다시")
                 await asyncio.sleep(5)
 
+    # ── 알림 ──────────────────────────────────────────────────
+    def check_alerts(self, symbs):
+        for s in symbs:
+            b, g = self.books.get(s), self.gates.get(s)
+            if not b or not g:
+                continue
+            v = b.indicators(self.period)["rsi"]
+            if v is None:
+                continue
+            a = g.check(v)
+            if not a:
+                continue
+            said = al.say_breach(b.name, b.symb, a["zone"] == "above", a["edge"])
+            ev = {"t": datetime.now().strftime("%H:%M:%S"), "symb": s, "name": b.name,
+                  "rsi": v, "zone": a["zone"], "strength": a["strength"],
+                  "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
+                          + (" (시작 때부터)" if a["start"] else ""),
+                  "suppressed": a.get("suppressed", "")}
+            self.events.appendleft(ev)
+            print(f"{ev['t']} 알림 {b.name} {ev['text']} RSI {v:.2f}"
+                  + (f" — 억제 ({ev['suppressed']})" if ev["suppressed"] else ""), flush=True)
+            if not ev["suppressed"] and self.settings["sound"]:
+                strong = a["strength"] == "strong"
+                self.voice.say(said if (not strong or al.SAY_STRONG) else "",
+                               "full" if strong else "short")
+            asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
+
+    def set_sound(self, on):
+        self.settings["sound"] = bool(on)
+        SETTINGS.write_text(json.dumps(self.settings), encoding="utf-8")
+
     # ── 브라우저 쪽 ───────────────────────────────────────────
     def set_status(self, s):
         self.status = s
@@ -155,7 +213,10 @@ class Hub:
 
     def state(self):
         return {"status": self.status, "nmin": self.nmin, "period": self.period,
-                "lower": self.lower, "upper": self.upper, "max": MAX_TICKERS,
+                "lower": al.LOWER, "upper": al.UPPER,
+                "strong_lower": al.STRONG_LOWER, "strong_upper": al.STRONG_UPPER,
+                "max": MAX_TICKERS, "sound": self.settings["sound"],
+                "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
     def chart(self, symb):
@@ -182,13 +243,21 @@ class Hub:
                 self.clients.discard(ws)
 
     async def push_loop(self):
-        """체결은 초에 수십 개씩 오니 0.5초마다 바뀐 종목만 묶어 보낸다."""
+        """체결은 초에 수십 개씩 오니 0.5초마다 바뀐 종목만 묶어 알림을 보고 화면에 보낸다.
+        알림은 브라우저가 없어도 본다."""
         while True:
             await asyncio.sleep(0.5)
-            if self.dirty and self.clients:
-                rows = [self.row(self.books[s]) for s in self.dirty if s in self.books]
-                self.dirty.clear()
+            if not self.dirty:
+                continue
+            dirty, self.dirty = self.dirty, set()
+            self.check_alerts(dirty)
+            if self.clients:
+                rows = [self.row(self.books[s]) for s in dirty if s in self.books]
                 await self.broadcast({"type": "rows", "rows": rows})
+
+
+def _num(v):
+    return f"{v:g}"
 
 
 def epoch(local_time):
@@ -247,6 +316,21 @@ async def api_remove(symb: str):
     return {"ok": True}
 
 
+@app.post("/api/sound")
+def api_sound(on: bool = Body(..., embed=True)):
+    hub.set_sound(on)
+    return {"sound": hub.settings["sound"]}
+
+
+@app.post("/api/sound/test")
+def api_sound_test(symb: str = Body("", embed=True)):
+    """소리 시험. 그 종목의 65 초과 문장을 말머리와 함께 읽는다."""
+    b = hub.books.get(symb.upper()) or next(iter(hub.books.values()), None)
+    text = al.say_breach(b.name, b.symb, True, al.UPPER) if b else al.TTS_GREETING_AGAIN
+    hub.voice.say(text, "short")
+    return {"text": text, "server": hub.voice.server_up(), "cached": hub.voice.cached(text)}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -266,12 +350,12 @@ def main():
     p.add_argument("tickers", nargs="*", help="더할 종목. 없으면 저장해 둔 목록만")
     p.add_argument("--min", type=int, default=5, help="분 단위 (기본 5)")
     p.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
-    p.add_argument("--lower", type=float, default=30, help="RSI 과매도 선 (기본 30)")
-    p.add_argument("--upper", type=float, default=70, help="RSI 과매수 선 (기본 70)")
+    p.add_argument("--tts-cache", default=str(HERE / "tts_cache"),
+                   help="소리 파일을 쌓는 곳. rsi 의 tts_cache 를 주면 거기 만들어 둔 소리를 같이 쓴다")
     p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 이면 같은 공유기의 다른 기기에서도 열린다")
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()
-    hub = Hub(args.tickers, args.min, args.period, args.lower, args.upper)
+    hub = Hub(args.tickers, args.min, args.period, args.tts_cache)
     import uvicorn
     print(f"http://{'localhost' if args.host == '127.0.0.1' else args.host}:{args.port}", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

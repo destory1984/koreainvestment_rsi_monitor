@@ -24,7 +24,7 @@
   header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
   h1 { font-size: 12px; margin: 0; font-weight: 700; }
   .sub { color: var(--muted); font-size: 10px; }
-  .pill { margin-left: auto; font-size: 10px; padding: 2px 8px; border-radius: 99px;
+  .pill { font-size: 10px; padding: 2px 8px; border-radius: 99px;
           background: var(--panel); border: 1px solid var(--line); color: var(--muted);
           max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.ok { color: var(--pos); border-color: var(--pos); }
@@ -61,7 +61,18 @@
   .gauge i { position: absolute; top: -3px; width: 2px; height: 10px; border-radius: 1px; background: var(--text); }
   .gauge b { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--muted) 25%, transparent); }
   .trend { display: inline-block; width: 10px; text-align: center; font-size: 9px; }
-  .hot { color: var(--hot); font-weight: 700; } .cold { color: var(--cold); font-weight: 700; }
+  .hot { color: var(--hot); } .cold { color: var(--cold); }
+  .hot.strong, .cold.strong { font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
+  .hbtn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+          border-radius: 99px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
+  .hbtn.off { color: var(--muted); }
+  .hbtn:hover { background: var(--sel); }
+  #events { list-style: none; margin: 0; padding: 4px 0; max-height: 132px; overflow-y: auto; }
+  #events li { display: flex; gap: 8px; padding: 2px 10px; white-space: nowrap; }
+  #events li .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #events li.sup { color: var(--muted); }
+  #events li.empty { color: var(--muted); }
+  .evhead { padding: 6px 10px 0; color: var(--muted); font-weight: 600; }
   .charthead { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 2px; }
   .charthead h2 { margin: 0; font-size: 11px; }
   .pane { position: relative; }
@@ -77,6 +88,9 @@
 <header>
   <h1>RSI Monitor</h1>
   <span class="sub" id="sub"></span>
+  <span style="margin-left:auto"></span>
+  <button class="hbtn" id="sound" title="알림 소리 켜고 끄기">🔊 소리</button>
+  <button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">시험</button>
   <span class="pill" id="status">연결 중</span>
 </header>
 <main>
@@ -92,6 +106,10 @@
         <tbody id="rows"></tbody>
       </table>
     </div>
+  </div>
+  <div class="card">
+    <div class="evhead">알림</div>
+    <ul id="events"><li class="empty">아직 없다</li></ul>
   </div>
   <div class="card">
     <div class="charthead"><h2 id="ctitle"></h2><span class="sub">시각은 그 시장의 현지 시각</span></div>
@@ -126,7 +144,8 @@ function setMsg(s, err) {
 function rsiCell(r) {
   if (r.rsi == null) return "-";
   const v = r.rsi;
-  const cls = v <= cfg.lower ? "cold" : v >= cfg.upper ? "hot" : "";
+  const cls = v < cfg.strong_lower ? "cold strong" : v < cfg.lower ? "cold"
+            : v > cfg.strong_upper ? "hot strong" : v > cfg.upper ? "hot" : "";
   let trend = '<span class="trend dim">—</span>';
   if (r.rsi_prev != null) {
     const d = v - r.rsi_prev;
@@ -202,6 +221,8 @@ function makeCharts() {
   };
   s.rsi.createPriceLine({ price: cfg.upper, color: css("--hot"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
   s.rsi.createPriceLine({ price: cfg.lower, color: css("--cold"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+  s.rsi.createPriceLine({ price: cfg.strong_upper, color: css("--hot"), lineStyle: 1, lineWidth: 1, axisLabelVisible: false });
+  s.rsi.createPriceLine({ price: cfg.strong_lower, color: css("--cold"), lineStyle: 1, lineWidth: 1, axisLabelVisible: false });
   rsi.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.06 } });
   s.rsi.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
   price.timeScale().applyOptions({ visible: false });
@@ -283,11 +304,57 @@ async function removeTicker(symb) {
   else setMsg(`${symb} 빼지 못했다`, true);
 }
 
+function eventItem(ev) {
+  const li = document.createElement("li");
+  const cls = ev.zone === "above" ? "up" : "down";
+  li.className = ev.suppressed ? "sup" : "";
+  li.innerHTML = `<span class="t">${ev.t}</span><b>${esc(ev.name)}</b>` +
+    `<span class="${ev.suppressed ? "" : cls}">${esc(ev.text)}${ev.strength === "strong" ? " ‼" : ""}</span>` +
+    `<span class="dim">RSI ${f(ev.rsi)}</span>` +
+    (ev.suppressed ? `<span class="dim">억제 — ${esc(ev.suppressed)}</span>` : "");
+  return li;
+}
+
+function renderEvents(list) {
+  const ul = $("#events");
+  ul.innerHTML = "";
+  if (!list.length) { ul.innerHTML = '<li class="empty">아직 없다</li>'; return; }
+  list.forEach(ev => ul.appendChild(eventItem(ev)));
+}
+
+function addEvent(ev) {
+  const ul = $("#events");
+  ul.querySelector(".empty")?.remove();
+  ul.prepend(eventItem(ev));
+  while (ul.children.length > 30) ul.lastChild.remove();
+}
+
+function setSound(on) {
+  cfg.sound = on;
+  $("#sound").textContent = on ? "🔊 소리" : "🔇 소리 꺼짐";
+  $("#sound").classList.toggle("off", !on);
+}
+
+$("#sound").onclick = async () => {
+  const res = await fetch("/api/sound", { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ on: !cfg.sound }) });
+  if (res.ok) setSound((await res.json()).sound);
+};
+
+$("#soundtest").onclick = async () => {
+  const res = await fetch("/api/sound/test", { method: "POST", headers: { "Content-Type": "application/json" },
+                                               body: JSON.stringify({ symb: selected || "" }) });
+  const j = await res.json();
+  setMsg(`시험: "${j.text}" — ` + (j.cached ? "만들어 둔 소리" : j.server ? "로컬 TTS 로 만드는 중" : "TTS 서버가 없어 윈도우 음성"));
+};
+
 async function loadState() {
   const st = await (await fetch("/api/state")).json();
   cfg = st;
   $("#sub").textContent = `${st.nmin}분봉 · RSI(${st.period}) · MACD(12,26,9)`;
   setStatus(st.status);
+  setSound(st.sound);
+  renderEvents(st.events || []);
   $("#rows").innerHTML = ""; rows = {};
   st.rows.forEach(renderRow);
   let want = selected;
@@ -303,6 +370,7 @@ function connect() {
     else if (m.type === "add") renderRow(m.row);
     else if (m.type === "remove") dropRow(m.symb);
     else if (m.type === "status") setStatus(m.status);
+    else if (m.type === "alert") addEvent(m.event);
     else if (m.type === "reload") loadState();
   };
   ws.onclose = () => { setStatus("서버와 끊김 — 다시 붙는 중"); setTimeout(() => { loadState().catch(() => {}); connect(); }, 3000); };
