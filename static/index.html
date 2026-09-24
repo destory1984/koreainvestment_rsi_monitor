@@ -102,6 +102,7 @@
   <span class="sub" id="sub"></span>
   <span style="margin-left:auto"></span>
   <button class="hbtn" id="sound" title="알림 소리 켜고 끄기">🔊 소리</button>
+  <button class="hbtn" id="sigsound" title="매수·매도 시그널도 말로 알릴지">🔊 시그널</button>
   <button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 시험</button>
   <span class="pill" id="status">연결 중</span>
 </header>
@@ -115,7 +116,7 @@
     </form>
     <div class="scroll">
       <table>
-        <thead><tr><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>구간</th><th>MACD</th><th>시그널</th><th>히스토</th><th>최근 알림</th><th>현지시각</th><th></th></tr></thead>
+        <thead><tr><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>구간</th><th>MACD</th><th>시그널</th><th>히스토</th><th>매수/매도</th><th>최근 알림</th><th>현지시각</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -204,6 +205,14 @@ function lastCell(r) {
   return `<b class="${a.zone === "above" ? "up" : "down"}">${esc(a.text.replace(" (시작 때부터)", ""))}</b> ${ago(a.ts)}`;
 }
 
+function sigCell(r) {
+  const x = r.last_signal;
+  if (!x) return "";
+  const t = new Date(x.bar * 1000).toISOString().slice(11, 16);   // 봉 시각(현지)
+  return `<b class="${x.side === "buy" ? "up" : "down"}${x.grade === "강" ? " strong" : ""}">${x.word} ${x.grade}</b> ` +
+         `<span class="dim" title="${esc(x.trend)}">${t}</span>`;
+}
+
 function cells(r) {
   const krx = r.excd === "KRX";
   const d = krx ? 1 : 4;
@@ -215,6 +224,7 @@ function cells(r) {
     zoneCell(r),
     sgn(r.macd, d), sgn(r.signal, d),
     `<span class="${r.hist >= 0 ? "pos" : "neg"}">${sgn(r.hist, d)}</span>`,
+    sigCell(r),
     lastCell(r),
     hms(r.time),
   ];
@@ -232,7 +242,7 @@ function renderRow(r) {
     tr = document.createElement("tr");
     tr.id = "r-" + r.symb;
     tr.title = r.excd === "KRX" ? `${r.name} · ${r.symb}` : `${r.excd}:${r.symb}`;
-    tr.innerHTML = c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 8 ? "last" : ""}">${x}</td>`).join("") +
+    tr.innerHTML = c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 9 ? "last" : ""}">${x}</td>`).join("") +
                    `<td class="del"><button title="빼기" aria-label="종목 빼기">${TRASH}</button></td>`;
     tr.onclick = () => select(r.symb);
     tr.querySelector(".del button").onclick = e => { e.stopPropagation(); removeTicker(r.symb); };
@@ -313,6 +323,7 @@ async function select(symb) {
                                            : { type: "price", precision: 2, minMove: 0.01 } });
   s.candle.setData(d.bars);
   barTimes = new Set(d.bars.map(b => b.time));
+  chartSignals = d.signals || [];
   setMarkers();
   if (onlySel()) renderEvents();
   s.rsi.setData(d.rsi);
@@ -370,6 +381,7 @@ function eventItem(ev) {
   li.innerHTML = `<span class="t">${ev.d && ev.d !== today ? ev.d + " " : ""}${ev.t}</span><b>${esc(ev.name)}</b>` +
     `<span class="${ev.suppressed ? "" : cls}">${esc(ev.text)}${ev.strength === "strong" ? " ‼" : ""}</span>` +
     `<span class="dim">RSI ${f(ev.rsi)}</span>` +
+    (ev.detail ? `<span class="dim">${esc(ev.detail)}</span>` : "") +
     (ev.suppressed ? `<span class="dim">억제 — ${esc(ev.suppressed)}</span>` : "");
   return li;
 }
@@ -388,7 +400,11 @@ function addEvent(ev) {
   events.unshift(ev);
   if (events.length > 500) events.pop();
   renderEvents();
-  if (ev.symb === selected) setMarkers();
+  if (ev.symb === selected) {
+    if (ev.type === "signal") chartSignals.push({ time: ev.bar, side: ev.side, word: ev.side === "buy" ? "매수" : "매도",
+                                                  grade: ev.strength === "strong" ? "강" : "약" });
+    setMarkers();
+  }
 }
 
 $("#evsel").onchange = () => {
@@ -398,16 +414,19 @@ $("#evsel").onchange = () => {
 try { $("#evsel").checked = !!localStorage.getItem("evsel"); } catch (e) {}
 
 // 차트에 알림이 난 봉을 표시한다. 초과는 봉 위 ▼, 미만은 봉 아래 ▲ (울린 것만)
-let barTimes = new Set();
+let barTimes = new Set(), chartSignals = [];
 function setMarkers() {
   if (!charts) return;
-  const m = events.filter(ev => ev.symb === selected && !ev.suppressed && barTimes.has(ev.bar))
+  const band = events.filter(ev => ev.symb === selected && !ev.suppressed && ev.type !== "signal" && barTimes.has(ev.bar))
     .map(ev => ({ time: ev.bar, position: ev.zone === "above" ? "aboveBar" : "belowBar",
                   color: ev.zone === "above" ? css("--hot") : css("--cold"),
-                  shape: ev.zone === "above" ? "arrowDown" : "arrowUp",
-                  text: ev.text.split(" ")[0] }))
-    .sort((a, b) => a.time - b.time);
-  charts.s.candle.setMarkers(m);
+                  shape: "circle", size: 0.6, text: ev.text.split(" ")[0] }));
+  const sig = chartSignals.filter(x => barTimes.has(x.time))
+    .map(x => ({ time: x.time, position: x.side === "buy" ? "belowBar" : "aboveBar",
+                 color: x.side === "buy" ? css("--up") : css("--down"),
+                 shape: x.side === "buy" ? "arrowUp" : "arrowDown",
+                 text: `${x.word}${x.grade === "강" ? "!" : ""}` }));
+  charts.s.candle.setMarkers([...band, ...sig].sort((a, b) => a.time - b.time));
 }
 
 function renderMarkets(list) {
@@ -426,6 +445,18 @@ function setSound(on) {
   $("#sound").textContent = on ? "🔊 소리" : "🔇 소리 꺼짐";
   $("#sound").classList.toggle("off", !on);
 }
+
+function setSigSound(on) {
+  cfg.signal_sound = on;
+  $("#sigsound").textContent = on ? "🔊 시그널" : "🔇 시그널";
+  $("#sigsound").classList.toggle("off", !on);
+}
+
+$("#sigsound").onclick = async () => {
+  const res = await fetch("/api/signal-sound", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                 body: JSON.stringify({ on: !cfg.signal_sound }) });
+  if (res.ok) setSigSound((await res.json()).signal_sound);
+};
 
 $("#sound").onclick = async () => {
   const res = await fetch("/api/sound", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -447,6 +478,7 @@ async function loadState() {
   $("#sub").textContent = `${st.nmin}분봉 · RSI(${st.period}) · MACD(12,26,9)`;
   setStatus(st.status);
   setSound(st.sound);
+  setSigSound(st.signal_sound);
   renderMarkets(st.markets);
   events = st.events || [];
   renderEvents();

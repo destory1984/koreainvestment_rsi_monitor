@@ -90,9 +90,14 @@ def say_breach(name, symb, above, edge):
     return f"{spell(name, symb)} {_num(edge)} {'초과' if above else '미만'}"
 
 
+def say_signal(name, symb, side):
+    return f"{spell(name, symb)} {'매수' if side == 'buy' else '매도'} 시그널"
+
+
 def phrases(name, symb):
     """이 종목으로 읽을 수 있는 문장 전부. 미리 만들어 둘 때 쓴다."""
-    out = [say_breach(name, symb, True, UPPER), say_breach(name, symb, False, LOWER)]
+    out = [say_breach(name, symb, True, UPPER), say_breach(name, symb, False, LOWER),
+           say_signal(name, symb, "buy"), say_signal(name, symb, "sell")]
     if SAY_STRONG:
         out += [say_breach(name, symb, True, STRONG_UPPER), say_breach(name, symb, False, STRONG_LOWER)]
     return out

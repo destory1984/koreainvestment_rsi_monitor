@@ -7,6 +7,7 @@
 서버 하나가 한국투자증권 실시간 연결을 잡고, 브라우저 여러 개에 값을 나눠 준다.
 종목은 화면에서 더하고 뺄 수 있고, kis_watchlist.json 에 저장된다.
 RSI 가 35/65, 30/70 을 넘으면 서버가 말로 알린다 (kis_alert.py). 브라우저를 닫아도 알림은 계속 나간다.
+봉이 닫힐 때마다 RSI·MACD 매수·매도 시그널을 본다 (kis_signal.py).
 """
 import argparse
 import asyncio
@@ -23,6 +24,7 @@ from fastapi.responses import FileResponse
 
 import kis_alert as al
 import kis_rsi as k
+import kis_signal as ks
 
 HERE = Path(__file__).parent
 STATIC = HERE / "static"
@@ -46,6 +48,9 @@ class Hub:
         except Exception:
             self.settings = {}
         self.settings.setdefault("sound", True)
+        self.settings.setdefault("signal_sound", True)   # 시그널도 말로 알릴지
+        self.signals = {}         # 종목 -> 닫힌 봉들에서 난 시그널 전부
+        self.closed = set()       # 새 봉이 생겨 앞 봉이 닫힌 종목
         self.clients = set()
         self.dirty = set()
         self.status = "시작 중"
@@ -103,6 +108,7 @@ class Hub:
         book = k.Book(excd, symb, bars, self.nmin)
         self.books[symb] = book
         self.gates[symb] = al.Gate()
+        self.signals[symb] = ks.signals(bars[:-1], self.period)
         time.sleep(0.1)
         return book, True
 
@@ -124,6 +130,7 @@ class Hub:
             if not book:
                 raise KeyError(symb)
             self.gates.pop(symb, None)
+            self.signals.pop(symb, None)
             self.save()
             self.dirty.discard(symb)
             if self.ws:
@@ -138,12 +145,14 @@ class Hub:
         """끊겼다 붙으면 그 사이 체결을 놓쳤으니 분봉을 새로 받는다."""
         for b in list(self.books.values()):
             b.bars = k.fetch_bars(self.appkey, self.secret, b.excd, b.symb, self.nmin)
+            self.signals[b.symb] = ks.signals(b.bars[:-1], self.period)
             time.sleep(0.1)
 
     def on_tick(self, d):
         book = self.books.get(d["SYMB"])
         if book:
-            book.on_tick(d)
+            if book.on_tick(d):
+                self.closed.add(book.symb)
             self.dirty.add(book.symb)
 
     def on_open(self, ws):
@@ -220,8 +229,9 @@ class Hub:
         return out
 
     def last_alert(self, symb):
-        """그 종목에서 마지막으로 실제로 울린 알림 (억제된 것은 빼고)."""
-        return next((e for e in self.events if e["symb"] == symb and not e["suppressed"]), None)
+        """그 종목에서 마지막으로 실제로 울린 선 알림 (억제된 것과 시그널은 빼고)."""
+        return next((e for e in self.events if e["symb"] == symb and not e["suppressed"]
+                     and e.get("type") != "signal"), None)
 
     def check_alerts(self, symbs):
         for s in symbs:
@@ -262,6 +272,43 @@ class Hub:
                                "full" if strong else "short")
             asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
 
+    def check_signals(self, symbs):
+        """앞 봉이 닫힌 종목의 시그널을 다시 셈한다. 방금 닫힌 봉에서 새로 났으면 알린다."""
+        for s in symbs:
+            b = self.books.get(s)
+            if not b or len(b.bars) < 3:
+                continue
+            old = {(x.bar, x.side) for x in self.signals.get(s, [])}
+            self.signals[s] = ks.signals(b.bars[:-1], self.period)
+            just = b.bars[-2]["time_us"]
+            for x in self.signals[s]:
+                if x.bar != just or (x.bar, x.side) in old:
+                    continue
+                now = datetime.now()
+                ev = {"type": "signal", "ts": now.timestamp(), "d": now.strftime("%m-%d"),
+                      "t": now.strftime("%H:%M:%S"), "bar": epoch(x.bar), "symb": s, "name": b.name,
+                      "rsi": x.rsi, "side": x.side, "zone": "above" if x.side == "buy" else "below",
+                      "strength": "strong" if x.grade == "강" else "warn",
+                      "text": f"{x.word} 시그널 ({x.grade}, {x.trend})",
+                      "detail": f"무장 중 RSI {'최저' if x.side == 'buy' else '최고'} {x.extreme:.1f}"
+                                f" · MACD {x.macd:+.4f} / 시그널 {x.signal:+.4f}",
+                      "suppressed": ""}
+                self.events.appendleft(ev)
+                with ALERT_LOG.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                print(f"{ev['t']} 시그널 {b.name} {ev['text']} RSI {x.rsi:.2f}", flush=True)
+                if self.settings["sound"] and self.settings["signal_sound"]:
+                    self.voice.say(al.say_signal(b.name, s, x.side),
+                                   "full" if x.grade == "강" else "short")
+                asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
+
+    def last_signal(self, symb):
+        x = (self.signals.get(symb) or [None])[-1]
+        if not x:
+            return None
+        return {"side": x.side, "word": x.word, "grade": x.grade, "trend": x.trend,
+                "bar": epoch(x.bar)}
+
     def set_sound(self, on):
         self.settings["sound"] = bool(on)
         SETTINGS.write_text(json.dumps(self.settings, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -281,6 +328,7 @@ class Hub:
                 "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
                 "rearm": bool(g and not all(g.armed.values())),
                 "last_alert": self.last_alert(b.symb),
+                "last_signal": self.last_signal(b.symb),
                 "bar": bar and {"time": epoch(bar["time_us"]), "open": bar["open"],
                                 "high": bar["high"], "low": bar["low"], "close": bar["close"]}}
 
@@ -289,6 +337,7 @@ class Hub:
                 "lower": al.LOWER, "upper": al.UPPER,
                 "strong_lower": al.STRONG_LOWER, "strong_upper": al.STRONG_UPPER,
                 "max": MAX_TICKERS, "sound": self.settings["sound"], "markets": self.markets,
+                "signal_sound": self.settings["signal_sound"],
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -305,7 +354,9 @@ class Hub:
                 "bars": [{"time": t, "open": x["open"], "high": x["high"], "low": x["low"],
                           "close": x["close"]} for t, x in zip(times, b.bars)],
                 "rsi": pts(s["rsi"]), "macd": pts(s["macd"]), "signal": pts(s["signal"]),
-                "hist": pts(s["hist"])}
+                "hist": pts(s["hist"]),
+                "signals": [{"time": epoch(x.bar), "side": x.side, "word": x.word, "grade": x.grade,
+                             "trend": x.trend} for x in self.signals.get(symb, [])]}
 
     async def broadcast(self, msg):
         text = json.dumps(msg)
@@ -323,7 +374,9 @@ class Hub:
             if not self.dirty:
                 continue
             dirty, self.dirty = self.dirty, set()
+            closed, self.closed = self.closed, set()
             self.check_alerts(dirty)
+            self.check_signals(closed)
             if self.clients:
                 rows = [self.row(self.books[s]) for s in dirty if s in self.books]
                 await self.broadcast({"type": "rows", "rows": rows})
@@ -394,6 +447,13 @@ async def api_remove(symb: str):
 def api_sound(on: bool = Body(..., embed=True)):
     hub.set_sound(on)
     return {"sound": hub.settings["sound"]}
+
+
+@app.post("/api/signal-sound")
+def api_signal_sound(on: bool = Body(..., embed=True)):
+    hub.settings["signal_sound"] = bool(on)
+    hub.set_sound(hub.settings["sound"])   # 설정 파일에 같이 적는다
+    return {"signal_sound": hub.settings["signal_sound"]}
 
 
 @app.post("/api/sound/test")
