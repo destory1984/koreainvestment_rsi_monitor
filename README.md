@@ -77,6 +77,7 @@ Edge 음성은 Microsoft Edge 브라우저의 「소리 내어 읽기」가 쓰�
 
 **로컬 TTS 를 쓰려면** — NVIDIA GPU 에 VRAM 이 8GB 남짓 비어 있어야 한다. 모델(약 4.3GB)은 처음 켤 때
 Hugging Face 에서 저절로 받는다. 공개 모델이라 토큰은 필요 없다.
+필자처럼 사람 목소리에 예민한 사람만 로컬 TTS 를 쓰면 된다. 대부분은 그냥 Edge 음성을 쓰면 된다.
 
 ```bash
 python -m venv .venv_tts
