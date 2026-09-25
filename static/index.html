@@ -103,6 +103,8 @@
   .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
   .nslot { display: inline-block; width: calc(var(--fs) * 3.4); text-align: left; }
+  .mtf { display: inline-flex; gap: 3px; }
+  .mtf > span:not(.dim) { display: inline-block; min-width: 1.6em; text-align: right; }
   .ntag { cursor: pointer; margin: 0 0 0 4px; }
   .ntag.manual { border-color: var(--down); color: var(--down); }
   .linkbtn { font: inherit; border: 0; background: none; color: var(--down); cursor: pointer; padding: 0 2px;
@@ -182,7 +184,7 @@
     <style id="colstyle"></style>
     <div class="scroll">
       <table>
-        <thead><tr><th></th><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>구간</th><th>MACD</th><th>시그널</th><th>히스토</th><th>매수/매도</th><th>최근 알림</th><th>현지시각</th><th></th></tr></thead>
+        <thead><tr><th></th><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th title="1분·5분·15분·60분봉 RSI">1·5·15·60</th><th>구간</th><th>MACD</th><th>시그널</th><th>히스토</th><th>매수/매도</th><th>최근 알림</th><th>현지시각</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -300,6 +302,21 @@ $("#rows").addEventListener("click", e => {
   if (t) explainNight(t.dataset.symb);
 });
 
+// 1·5·15·60분봉 RSI 를 나란히. 선에 따라 RSI 칸과 같은 색
+function mtfCell(r) {
+  const m = r.mtf;
+  if (!m) return "";
+  const one = v => {
+    if (v == null) return '<span class="dim">-</span>';
+    const cls = v < cfg.strong_lower ? "cold strong" : v < cfg.lower ? "cold"
+              : v > cfg.strong_upper ? "hot strong" : v > cfg.upper ? "hot" : "";
+    return `<span class="${cls}">${fr(v)}</span>`;
+  };
+  const keys = Object.keys(m).sort((a, b) => a - b);
+  return `<span class="mtf" title="${keys.map(k => `${k}분 ${m[k] == null ? "-" : fr(m[k])}`).join(" · ")}">` +
+         keys.map(k => one(m[k])).join('<span class="dim">·</span>') + "</span>";
+}
+
 function zoneCell(r) {
   const [zone, strength] = r.zone || ["neutral", ""];
   if (zone === "neutral") return `<span class="dim">밴드 안${r.rearm ? " · 재무장 대기" : ""}</span>`;
@@ -333,6 +350,7 @@ function cells(r) {
       fmtPrice(r.price, krx),
     r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
     rsiCell(r),
+    mtfCell(r),
     zoneCell(r),
     sgn(r.macd, d), sgn(r.signal, d),
     `<span class="${r.hist >= 0 ? "pos" : "neg"}">${sgn(r.hist, d)}</span>`,
@@ -356,7 +374,7 @@ function renderRow(r) {
     tr = document.createElement("tr");
     tr.id = "r-" + r.symb;
     tr.title = r.excd === "KRX" ? `${r.name} · ${r.symb}` : `${r.excd}:${r.symb}`;
-    tr.innerHTML = `<td class="grip" title="끌어서 차례 바꾸기">${GRIP}</td>` + c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 9 ? "last" : ""}">${x}</td>`).join("") +
+    tr.innerHTML = `<td class="grip" title="끌어서 차례 바꾸기">${GRIP}</td>` + c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 10 ? "last" : ""}">${x}</td>`).join("") +
                    `<td class="del"><button title="빼기" aria-label="종목 빼기">${TRASH}</button></td>`;
     tr.onclick = () => select(r.symb);
     dragRow(tr, tr.querySelector(".grip"));

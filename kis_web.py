@@ -15,6 +15,7 @@ import calendar
 import json
 import re
 import sys
+import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -35,6 +36,7 @@ SETTINGS = HERE / "kis_settings.json"
 ALERT_LOG = HERE / "kis_alerts.jsonl"   # 알림 기록. 한 줄에 하나, 서버를 다시 켜도 남는다
 HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
+MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
 SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regular": "미국 정규장",
                   "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
 
@@ -43,6 +45,7 @@ class Hub:
     def __init__(self, tickers, nmin, period, tts_cache):
         self.tickers, self.nmin, self.period = tickers, nmin, period
         self.books = {}
+        self.tf = {}              # 종목 -> {분: Book}. 주 분봉 말고 나란히 보일 시간봉들 (뒤에서 받는다)
         self.gates = {}           # 종목 -> 알림 상태
         self.sup_seen = set()     # 이미 적은 억제 (종목, 종류, 까닭). 실제로 울리면 지운다
         self.events = deque(self.read_log(), maxlen=HISTORY)   # 최근 것이 앞
@@ -90,6 +93,7 @@ class Hub:
         if self.settings["sound"]:
             self.voice.greet(*self.greetings())
         self.prefetch(list(self.books.values()))
+        self.load_tf()   # 1·15·60분봉은 뒤에서
 
     def greetings(self):
         return (self.settings.get("greeting", al.TTS_GREETING),
@@ -117,6 +121,41 @@ class Hub:
         on = self.settings.get("night", {}).get(symb, auto)
         return (k.merge_bars(bars, day) if on else bars), {"on": on, "auto": auto, "have": have, "of": of}
 
+    def _tf_books(self, book):
+        """주 분봉 말고 MTF 의 다른 시간봉들을 받는다 (블로킹). 오버나이트 봉은 주 분봉과 같은 결정을 따른다."""
+        out = {}
+        for tf in MTF:
+            if tf == self.nmin:
+                continue
+            try:
+                if book.excd == "KRX":   # 국내는 1분봉을 묶어 만드니 긴 봉은 조금만 받는다
+                    bars = k.fetch_kr_bars(self.appkey, self.secret, book.symb, tf, 120 if tf == 1 else 30)
+                else:
+                    bars = k.fetch_bars(self.appkey, self.secret, book.excd, book.symb, tf)
+                    if book.night and book.night["on"]:
+                        try:
+                            bars = k.merge_bars(bars, k.fetch_bars(self.appkey, self.secret,
+                                                                   k.DAY_EXCD[book.excd], book.symb, tf))
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"{book.symb} {tf}분봉 못 받음 — {e}", flush=True)
+                continue
+            b = k.Book(book.excd, book.symb, bars, tf)
+            b.night = book.night
+            out[tf] = b
+            time.sleep(0.1)
+        return out
+
+    def load_tf(self, books=None):
+        """여러 시간봉을 뒤에서 받는다. 켤 때 5분봉만 먼저 받아 화면을 빨리 띄우려는 것이다."""
+        def run():
+            for b in list(books or self.books.values()):
+                if b.symb in self.books:
+                    self.tf[b.symb] = self._tf_books(b)
+                    self.dirty.add(b.symb)
+        threading.Thread(target=run, daemon=True).start()
+
     async def set_night(self, symb, on):
         """오버나이트 봉을 넣을지 손으로 정한다. 저절로 정한 것과 같으면 설정에서 지운다."""
         book = self.books.get(symb)
@@ -131,6 +170,7 @@ class Hub:
         async with self.lock:
             book.bars, book.night = await asyncio.to_thread(self._bars, book.excd, symb)
             self.signals[symb] = ks.signals(book.bars[:-1], self.period)
+            self.tf[symb] = await asyncio.to_thread(self._tf_books, book)
         await self.broadcast({"type": "reload"})
 
     def _add(self, ticker):
@@ -169,6 +209,7 @@ class Hub:
             if self.ws:
                 await k.subscribe(self.ws, self.approval_key, book.key_for(self.day))
         self.prefetch([book])
+        self.load_tf([book])
         await self.broadcast({"type": "add", "row": self.row(book)})
         return book
 
@@ -179,6 +220,7 @@ class Hub:
                 raise KeyError(symb)
             self.gates.pop(symb, None)
             self.signals.pop(symb, None)
+            self.tf.pop(symb, None)
             self.save()
             self.dirty.discard(symb)
             if self.ws:
@@ -204,6 +246,7 @@ class Hub:
         for b in list(self.books.values()):
             b.bars, b.night = self._bars(b.excd, b.symb)
             self.signals[b.symb] = ks.signals(b.bars[:-1], self.period)
+            self.tf[b.symb] = self._tf_books(b)
             time.sleep(0.1)
 
     def on_tick(self, d):
@@ -211,6 +254,8 @@ class Hub:
         if book:
             if book.on_tick(d):
                 self.closed.add(book.symb)
+            for b in self.tf.get(book.symb, {}).values():
+                b.on_tick(d)
             self.dirty.add(book.symb)
 
     def on_open(self, ws):
@@ -416,12 +461,26 @@ class Hub:
         g = self.gates.get(b.symb)
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
                 "time": b.us_time, "day": b.day_quote, "night": b.night, **ind,
+                "mtf": self.mtf(b, ind["rsi"]),
                 "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
                 "rearm": bool(g and not all(g.armed.values())),
                 "last_alert": self.last_alert(b.symb),
                 "last_signal": self.last_signal(b.symb),
                 "bar": bar and {"time": epoch(bar["time_us"]), "open": bar["open"],
                                 "high": bar["high"], "low": bar["low"], "close": bar["close"]}}
+
+    def mtf(self, b, rsi_main):
+        """{분: RSI}. 아직 못 받은 시간봉은 None."""
+        tf = self.tf.get(b.symb, {})
+        out = {}
+        for m in MTF:
+            if m == self.nmin:
+                out[m] = rsi_main
+            elif m in tf:
+                out[m] = k.rsi_series([x["close"] for x in tf[m].bars[-400:]], self.period)[-1]
+            else:
+                out[m] = None
+        return out
 
     def state(self):
         return {"status": self.status, "nmin": self.nmin, "period": self.period,
