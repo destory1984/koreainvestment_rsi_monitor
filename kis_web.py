@@ -36,6 +36,8 @@ SETTINGS = HERE / "kis_settings.json"
 ALERT_LOG = HERE / "kis_alerts.jsonl"   # 알림 기록. 한 줄에 하나, 서버를 다시 켜도 남는다
 HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
+AFTER = (15, 30, 60)   # 알림 뒤 이만큼 분 지나 가격이 알림 쪽으로 갔는지 본다 (kis_replay 와 같은 셈)
+AFTER_SLACK = 10 * 60  # 그 시각 뒤 이만큼(초) 안에 시작한 봉이 없으면 장이 닫힌 것으로 본다
 MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
 SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regular": "미국 정규장",
                   "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
@@ -94,6 +96,7 @@ class Hub:
         if self.settings["sound"]:
             self.voice.greet(*self.greetings())
         self.prefetch(list(self.books.values()))
+        self.fill_after()   # 꺼져 있던 사이 결과가 난 알림들
         self.load_tf()   # 1·15·60분봉은 뒤에서
 
     def greetings(self):
@@ -339,17 +342,25 @@ class Hub:
     # ── 알림 ──────────────────────────────────────────────────
     @staticmethod
     def read_log():
+        """알림 기록을 최근 것부터. 「그 뒤」 결과는 따로 적힌 줄({"type": "after"})을 알림에 붙인다."""
         try:
-            lines = ALERT_LOG.read_text(encoding="utf-8").splitlines()[-HISTORY:]
+            lines = ALERT_LOG.read_text(encoding="utf-8").splitlines()[-HISTORY * 2:]
         except FileNotFoundError:
             return []
-        out = []
-        for ln in reversed(lines):
+        out, after = [], {}
+        for ln in lines:
             try:
-                out.append(json.loads(ln))
+                ev = json.loads(ln)
             except ValueError:
-                pass
-        return out
+                continue
+            if ev.get("type") == "after":
+                after[(ev["of"], ev["symb"])] = ev["after"]
+            else:
+                out.append(ev)
+        for ev in out:
+            if (ev["ts"], ev["symb"]) in after:
+                ev["after"] = after[(ev["ts"], ev["symb"])]
+        return out[::-1][:HISTORY]
 
     def last_alert(self, symb):
         """그 종목에서 마지막으로 실제로 울린 선 알림 (억제된 것과 시그널은 빼고)."""
@@ -380,7 +391,7 @@ class Hub:
             now = datetime.now()
             ev = {"ts": now.timestamp(), "d": now.strftime("%m-%d"), "t": now.strftime("%H:%M:%S"),
                   "bar": epoch(b.bars[-1]["time_us"]), "symb": s, "name": b.name,
-                  "rsi": v, "zone": a["zone"], "strength": a["strength"],
+                  "rsi": v, "price": b.price, "start": a["start"], "zone": a["zone"], "strength": a["strength"],
                   "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
                           + (" (시작 때부터)" if a["start"] else ""),
                   "suppressed": a.get("suppressed", ""),
@@ -412,7 +423,8 @@ class Hub:
                 now = datetime.now()
                 ev = {"type": "signal", "ts": now.timestamp(), "d": now.strftime("%m-%d"),
                       "t": now.strftime("%H:%M:%S"), "bar": epoch(x.bar), "symb": s, "name": b.name,
-                      "rsi": x.rsi, "side": x.side, "zone": "above" if x.side == "buy" else "below",
+                      "rsi": x.rsi, "price": b.price,
+                      "side": x.side, "zone": "above" if x.side == "buy" else "below",
                       "strength": "strong" if x.grade == "강" else "warn",
                       "text": f"{x.word} 시그널 ({x.grade}, {x.trend})",
                       "detail": f"무장 중 RSI {'최저' if x.side == 'buy' else '최고'} {x.extreme:.1f}"
@@ -426,6 +438,50 @@ class Hub:
                     self.voice.say(al.say_signal(b.name, s, x.side),
                                    "full" if x.grade == "강" else "short")
                 asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
+
+    def fill_after(self, symbs=None):
+        """알림 뒤 15·30·60분 결과를 채운다. 말한 쪽으로 갔으면 +(%). 장이 닫혀 못 보면 None.
+        들어간 값은 알림 때 가격, 나온 값은 알림 봉에서 그만큼 뒤에 시작한 봉의 종가(그 봉이 닫힌 뒤).
+        셋 다 정해지면 알림 기록에 한 줄 더 적어 다시 켜도 남게 한다. 바뀐 알림들을 돌려준다."""
+        changed = []
+        for ev in self.events:
+            if symbs is not None and ev["symb"] not in symbs:
+                continue
+            if ev.get("suppressed") or ev.get("start") or "(시작 때부터)" in ev.get("text", ""):
+                continue
+            after = ev.setdefault("after", {})
+            if len(after) == len(AFTER):
+                continue
+            b = self.books.get(ev["symb"])
+            if not b or not b.bars:
+                continue
+            times = [epoch(x["time_us"]) for x in b.bars]
+            try:
+                i0 = times.index(ev["bar"])
+            except ValueError:
+                continue   # 알림 봉이 받은 분봉 밖이다
+            entry = ev.get("price") or b.bars[i0]["close"]
+            up = ev["zone"] == "below" if ev.get("type") != "signal" else ev["side"] == "buy"
+            before = dict(after)
+            for h in AFTER:
+                if str(h) in after:
+                    continue
+                target = ev["bar"] + h * 60
+                j = next((j for j in range(i0 + 1, len(times)) if times[j] >= target), None)
+                if j is None or j == len(times) - 1 and times[j] <= target + AFTER_SLACK:
+                    continue   # 아직 그 봉이 없거나 진행 중
+                if times[j] > target + AFTER_SLACK:
+                    after[str(h)] = None   # 그사이 장이 닫혔다
+                else:
+                    r = (b.bars[j]["close"] / entry - 1) * 100
+                    after[str(h)] = round(r if up else 0.0 - r, 3)
+            if after != before:
+                changed.append(ev)
+                if len(after) == len(AFTER):
+                    with ALERT_LOG.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps({"type": "after", "of": ev["ts"], "symb": ev["symb"],
+                                            "after": after}, ensure_ascii=False) + "\n")
+        return changed
 
     def last_signal(self, symb):
         x = (self.signals.get(symb) or [None])[-1]
@@ -533,6 +589,11 @@ class Hub:
             except Exception:
                 self.clients.discard(ws)
 
+    async def push_after(self, changed):
+        if changed:
+            await self.broadcast({"type": "after", "events": [
+                {"ts": e["ts"], "symb": e["symb"], "after": e["after"]} for e in changed]})
+
     async def push_loop(self):
         """체결은 초에 수십 개씩 오니 0.5초마다 바뀐 종목만 묶어 알림을 보고 화면에 보낸다.
         알림은 브라우저가 없어도 본다."""
@@ -544,6 +605,8 @@ class Hub:
             closed, self.closed = self.closed, set()
             self.check_alerts(dirty)
             self.check_signals(closed)
+            if closed:
+                await self.push_after(self.fill_after(closed))
             if self.clients:
                 rows = [self.row(self.books[s]) for s in dirty if s in self.books]
                 await self.broadcast({"type": "rows", "rows": rows})

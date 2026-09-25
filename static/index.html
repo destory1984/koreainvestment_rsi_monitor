@@ -134,6 +134,7 @@
   #events li { display: flex; gap: 8px; padding: 2px 10px; white-space: nowrap; }
   #events li .t { color: var(--muted); font-variant-numeric: tabular-nums; }
   #events li.sup { color: var(--muted); }
+  #events li .after { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
   #events li.empty { color: var(--muted); }
   .evhead { display: flex; gap: 10px; align-items: center; padding: 6px 10px 0; color: var(--muted); font-weight: 600; }
   .evhead label { font-weight: 400; display: inline-flex; gap: 3px; align-items: center; cursor: pointer; }
@@ -574,6 +575,31 @@ async function removeTicker(symb) {
   else setMsg(`${symb} 빼지 못했다`, true);
 }
 
+// 알림 뒤 15·30·60분에 알림이 말한 쪽으로 갔는지 (+ 면 맞음). 장이 닫혀 못 본 것은 「—」, 아직이면 「…」
+const AFTER = [15, 30, 60];
+function afterHtml(ev) {
+  if (ev.suppressed || ev.start || (ev.text || "").includes("(시작 때부터)")) return "";
+  const a = ev.after || {};
+  const fresh = Date.now() / 1000 - ev.ts < 2 * 3600;   // 오래된 것은 못 채운 칸을 비워 둔다
+  if (!Object.keys(a).length && !fresh) return "";
+  const one = h => {
+    if (!(h in a)) return fresh ? `<span class="dim">${h}분 …</span>` : "";
+    const v = a[h];
+    if (v == null) return `<span class="dim" title="그사이 장이 닫혀 못 봤다">${h}분 —</span>`;
+    return `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : "dim"}">${h}분 ${sgn(v, 2)}%</span>`;
+  };
+  return `<span class="after" title="알림 때 가격에서 15·30·60분 뒤 봉 종가까지. 알림이 말한 쪽으로 갔으면 +">` +
+         AFTER.map(one).filter(Boolean).join(" ") + "</span>";
+}
+
+function setAfter(list) {
+  list.forEach(x => {
+    const ev = events.find(e => e.ts === x.ts && e.symb === x.symb);
+    if (ev) ev.after = x.after;
+  });
+  renderEvents();
+}
+
 function eventItem(ev) {
   const li = document.createElement("li");
   const n = new Date(), today = `${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -581,7 +607,7 @@ function eventItem(ev) {
   li.className = ev.suppressed ? "sup" : "";
   li.innerHTML = `<span class="t">${ev.d && ev.d !== today ? ev.d + " " : ""}${ev.t}</span><b>${esc(ev.name)}</b>` +
     `<span class="${ev.suppressed ? "" : cls}">${esc(ev.text)}${ev.strength === "strong" ? " ‼" : ""}</span>` +
-    `<span class="dim">RSI ${fr(ev.rsi)}</span>` +
+    `<span class="dim">RSI ${fr(ev.rsi)}</span>` + afterHtml(ev) +
     (ev.detail ? `<span class="dim">${esc(ev.detail)}</span>` : "") +
     (ev.suppressed ? `<span class="dim">억제 — ${esc(ev.suppressed)}</span>` : "") +
     (ev.muted ? `<span class="dim">🔇 ${esc(ev.muted)}</span>` : "");
@@ -853,6 +879,7 @@ function connect() {
     else if (m.type === "order") { if (!$("#rows .dragging")) applyOrder(m.symbs); }
     else if (m.type === "status") setStatus(m.status);
     else if (m.type === "alert") addEvent(m.event);
+    else if (m.type === "after") setAfter(m.events);
     else if (m.type === "markets") renderMarkets(m.markets);
     else if (m.type === "reload") loadState();
   };
