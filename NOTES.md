@@ -103,7 +103,8 @@
 | `kis_signal.py` | 매수·매도 시그널 (`rsi_band`, `signals`) |
 | `kis_replay.py` | 알림 채점: 분봉 거슬러 받기(`replay_cache/`), 같은 규칙으로 되감기, 15·30·60분 뒤 채점 |
 | `static/index.html` | 웹 화면 한 파일 (lightweight-charts 4.2.3, CDN) |
-| `tts_server.py` | 로컬 Qwen3-TTS 서버 (선택) |
+| `tts_server.py` | 로컬 Qwen3-TTS 서버 (선택). 늘 띄우지 않는다 |
+| `tts_make.py` | 로컬 TTS 서버를 잠깐 띄워 없는 알림 문장을 녹음하고 내린다. 종목·읽는 법을 바꾼 뒤 Claude 가 돌린다 |
 | `requirements.txt`, `README.md`, `TODO.md`, `NOTES.md`, `docs/screen_2026-09-25.png` | |
 
 저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`(키), `kis_token.json`, `kis_exchange.json`(거래소 캐시),
