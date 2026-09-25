@@ -183,6 +183,46 @@ def table(title, rows_by_tf, bases, ndays, pick=None):
         print(f"{tf:>3}분{len(rs):>6}{per_day:>6.1f}  " + "".join(f"{'':>3}{fmt(stats(rs, bases, h))}" for h in HORIZONS))
 
 
+def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print):
+    """종목마다 1분봉을 (이어 받아) 봉 길이별로 채점한다.
+    (봉 길이 -> 모든 종목 채점 줄, 종목 -> 기준, 종목 -> {봉 길이: 줄}, 종목 -> 채점 날 수, 종목 -> 정보)."""
+    appkey = secret = None
+    if not offline:
+        appkey, secret = k.load_keys()
+    con = rp.db()
+    all_rows, bases, per_symb, ndays, info = defaultdict(list), {}, {}, {}, {}
+    for t in tickers:
+        if offline and ":" not in t:
+            excd, symb = rp.find_excd(con, t.upper(), 1), t.upper()
+            if not excd:
+                say(f"{t}: 쌓아 둔 1분봉 없음")
+                continue
+        else:
+            excd, symb = k.resolve(appkey, secret, t)
+        try:
+            minutes = load_minutes(con, appkey, secret, excd, symb, offline)
+        except Exception as e:
+            say(f"{symb}: 건너뜀 — {e}")
+            continue
+        if not minutes:
+            say(f"{symb}: 1분봉 없음 (수집을 기다린다)")
+            continue
+        kr = excd == "KRX"
+        rows, base, span = run_ticker(symb, minutes, tfs, period, rp.lines_for(symb, lines), kr)
+        if not span:
+            say(f"{symb}: 날이 모자람 ({len(minutes)} 분)")
+            continue
+        bases[symb], per_symb[symb], ndays[symb] = base, rows, span[2]
+        for tf, rs in rows.items():
+            all_rows[tf] += rs
+        info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2]}
+        name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
+        say(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "
+              + " ".join(f"{tf}분 {len(rs)}" for tf, rs in rows.items()))
+    con.close()
+    return all_rows, bases, per_symb, ndays, info
+
+
 def main():
     ap = argparse.ArgumentParser(description="몇 분봉 RSI 가 가장 잘 맞는지 견준다")
     ap.add_argument("tickers", nargs="*", help="없으면 kis_watchlist.json + kis_collect.json 의 종목 전부")
@@ -195,36 +235,8 @@ def main():
     args = ap.parse_args()
     tfs = [int(x) for x in args.tf.split(",")]
 
-    tickers = args.tickers or rp.collect_tickers()
-    appkey = secret = None
-    if not args.offline:
-        appkey, secret = k.load_keys()
-    con = rp.db()
-    all_rows, bases, per_symb, ndays = defaultdict(list), {}, {}, {}
-    for t in tickers:
-        if args.offline and ":" not in t:
-            excd, symb = rp.find_excd(con, t.upper(), 1), t.upper()
-            if not excd:
-                print(f"{t}: 쌓아 둔 1분봉 없음")
-                continue
-        else:
-            excd, symb = k.resolve(appkey, secret, t)
-        try:
-            minutes = load_minutes(con, appkey, secret, excd, symb, args.offline)
-        except Exception as e:
-            print(f"{symb}: 건너뜀 — {e}")
-            continue
-        kr = excd == "KRX"
-        rows, base, span = run_ticker(symb, minutes, tfs, args.period, rp.lines_for(symb, args.lines), kr)
-        if not span:
-            print(f"{symb}: 날이 모자람 ({len(minutes)} 분)")
-            continue
-        bases[symb], per_symb[symb], ndays[symb] = base, rows, span[2]
-        for tf, rs in rows.items():
-            all_rows[tf] += rs
-        name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
-        print(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "
-              + " ".join(f"{tf}분 {len(rs)}" for tf, rs in rows.items()))
+    all_rows, bases, per_symb, ndays, _ = analyze(args.tickers or rp.collect_tickers(), tfs, args.period,
+                                                  args.lines, args.offline)
     if not all_rows:
         sys.exit("채점할 것이 없다.")
 

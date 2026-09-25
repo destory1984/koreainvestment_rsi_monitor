@@ -814,6 +814,15 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/report")
+def report():
+    """채점 보고서 (kis_report.py 가 만든 것). 없으면 만드는 법을 알린다."""
+    page = rp.CACHE / "report.html"
+    if not page.exists():
+        raise HTTPException(404, "보고서가 아직 없다 — python kis_report.py 로 만든다")
+    return FileResponse(page)
+
+
 @app.get("/api/state")
 def api_state():
     return hub.state()
