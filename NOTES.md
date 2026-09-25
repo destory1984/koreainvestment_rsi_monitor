@@ -117,6 +117,8 @@
 36. **1분봉 쌓기** (09-25 밤) — `--collect` 가 모든 종목의 1분봉을 DB(nmin=1) 마지막 봉 뒤로 이어 받는다 (`topup_minutes`,
     `last_minute`). 주간거래 시간이면 주간거래 1분봉도 (BAQ 등, keyb 로 3쪽 ≈ 6시간 남짓만 온다 → 세션 중 수집 필요).
     1분봉은 약 25거래일만 거슬러 준다(TSLA 23,339개, 08-21~). 한 행 약 74바이트 → 종목당 1년 25MB 쯤.
+    모니터링은 안 하고 1분봉만 쌓을 종목은 `kis_collect.json`(저장소 밖) — 09-25 에 18개(FNGU TQQQ MSFT AAPL META GOOG CBRS SPCX PLTR
+    AMD AVGO INTC MRVL NVTS ORCL QCOM COIN IBIT)를 넣어 모두 31종목. 처음 수집 때 종목당 50초쯤 걸려 받는다. `kis_tf.py` 도 이 목록을 본다.
 
 ## 채점 결과 (09-25 첫 번째, 미국 11종목, 09-14~09-25, 60분 뒤)
 
@@ -230,7 +232,7 @@
 | `collect_day.vbs` | 작업 스케줄러가 창 없이 `--collect` 를 돌리게 (Git Bash 경유) |
 | `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25_2.png` | |
 
-저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`, `kis_token.json`, `kis_exchange.json`, `kis_watchlist.json`(종목 목록),
+저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`, `kis_token.json`, `kis_exchange.json`, `kis_watchlist.json`(종목 목록), `kis_collect.json`(1분봉만 쌓을 종목),
 `kis_settings.json`(소리·인사·`night`·`sound_sessions`·`quiet`·`mute`·`lines`·`telegram`), `kis_alerts.jsonl`(알림 기록 + after 줄), `kis_holidays.json`,
 `tts_cache/`(+ `backup_sohee/`), `replay_cache/`(`bars.db`, `collect.log`, `json_backup/`),
 `kis_web.log*`, `.venv*/`(로컬 TTS 는 `.venv_tts`), `.claude/`. 저장소 폴더의 `start` 파일은 사용자 것이라 건드리지 않는다.

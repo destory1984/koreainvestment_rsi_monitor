@@ -92,6 +92,7 @@ HERE = Path(__file__).parent
 CACHE = HERE / "replay_cache"
 DB = CACHE / "bars.db"
 WATCHLIST = HERE / "kis_watchlist.json"
+COLLECT_EXTRA = HERE / "kis_collect.json"   # 모니터링은 안 하고 1분봉만 쌓을 종목 ["NAS:MSFT", ...]
 SETTINGS = HERE / "kis_settings.json"
 HORIZONS = (15, 30, 60)
 SLACK_MIN = 10          # 나온 값 봉이 목표 시각에서 이만큼 늦어도 받아 준다
@@ -343,6 +344,14 @@ def load_bars(con, appkey, secret, excd, symb, nmin, days, offline):
 
 
 # ── 되감기 ────────────────────────────────────────────────────
+def collect_tickers():
+    """분봉을 쌓을 종목: 모니터링 목록 + kis_collect.json (겹치면 한 번)."""
+    out = json.loads(WATCHLIST.read_text(encoding="utf-8"))
+    if COLLECT_EXTRA.exists():
+        out += json.loads(COLLECT_EXTRA.read_text(encoding="utf-8"))
+    return list(dict.fromkeys(t.upper() for t in out))
+
+
 def lines_for(symb, override=None):
     """되감기에 쓸 종목 RSI 선: --lines → kis_settings.json 의 "lines" → 기본."""
     if override:
@@ -493,9 +502,9 @@ def main():
     ap.add_argument("--collect", action="store_true", help="주간거래 분봉만 받아 쌓고 끝내기")
     args = ap.parse_args()
 
-    tickers = args.tickers or json.loads(WATCHLIST.read_text(encoding="utf-8"))
     if args.collect:
-        return collect(tickers, args.min)
+        return collect(args.tickers or collect_tickers(), args.min)
+    tickers = args.tickers or json.loads(WATCHLIST.read_text(encoding="utf-8"))
     appkey = secret = None
     if not args.offline:
         appkey, secret = k.load_keys()

@@ -25,7 +25,7 @@ kis_tf.py — 몇 분봉 RSI 로 알림을 울려야 가장 잘 맞는지 견준
 ────────────────────────────────────────────────────────────
 쓰는 법
 
-  python kis_tf.py                      종목 목록 전체, 1·3·5·10·15·30·60분
+  python kis_tf.py                      종목 목록 + kis_collect.json 전체, 1·3·5·10·15·30·60분
   python kis_tf.py TSLA SOXL --tf 1,5,15
   python kis_tf.py --offline            새로 받지 않고 쌓아 둔 1분봉만 (replay_cache/bars.db, nmin=1)
   python kis_tf.py --detail             알림 종류(35 미만 등)·시그널까지 나눠 보기
@@ -185,7 +185,7 @@ def table(title, rows_by_tf, bases, ndays, pick=None):
 
 def main():
     ap = argparse.ArgumentParser(description="몇 분봉 RSI 가 가장 잘 맞는지 견준다")
-    ap.add_argument("tickers", nargs="*", help="없으면 kis_watchlist.json 의 종목 전부")
+    ap.add_argument("tickers", nargs="*", help="없으면 kis_watchlist.json + kis_collect.json 의 종목 전부")
     ap.add_argument("--tf", default=",".join(map(str, TFS)), help="견줄 봉 길이 (분, 쉼표로)")
     ap.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
     ap.add_argument("--lines", help="모든 종목에 이 RSI 선 (kis_replay --lines 와 같다)")
@@ -195,7 +195,7 @@ def main():
     args = ap.parse_args()
     tfs = [int(x) for x in args.tf.split(",")]
 
-    tickers = args.tickers or json.loads(rp.WATCHLIST.read_text(encoding="utf-8"))
+    tickers = args.tickers or rp.collect_tickers()
     appkey = secret = None
     if not args.offline:
         appkey, secret = k.load_keys()

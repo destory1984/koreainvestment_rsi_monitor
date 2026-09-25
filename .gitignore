@@ -9,6 +9,7 @@ kis_holidays.json
 # Claude Code 미리보기 설정
 .claude/
 kis_watchlist.json
+kis_collect.json
 kis_settings.json
 tts_cache/
 .venv*/
