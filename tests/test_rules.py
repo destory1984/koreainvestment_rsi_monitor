@@ -19,6 +19,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import kis_alert as al      # noqa: E402
+import kis_diverge as dv    # noqa: E402
 import kis_replay as rp     # noqa: E402
 import kis_rsi as k         # noqa: E402
 import kis_signal as ks     # noqa: E402
@@ -735,6 +736,25 @@ class MinuteTest(unittest.TestCase):
         t = datetime(2026, 9, 24, 10, 0)
         rows = [{"symb": s, "time": t + timedelta(minutes=d)} for s, d in (("A", 0), ("A", 30), ("A", 61), ("B", 5))]
         self.assertEqual([(r["symb"], r["time"].minute) for r in rep.dedupe(rows)], [("A", 0), ("A", 1), ("B", 5)])
+
+    def test_pivots(self):
+        v = [5, 4, 3, 2, 3, 4, 5, 4, 3, 4, 5]
+        self.assertEqual(dv.pivots(v, 2, low=True), [3, 8])
+        self.assertEqual(dv.pivots(v, 2, low=False), [6])
+        self.assertEqual(dv.pivots([1, 1, 1, 1, 1], 1), [])                  # 같은 값은 저점이 아니다
+
+    def test_bullish_divergence(self):
+        # 크게 빠져 저점(RSI 낮음) → 반등 → 천천히 조금 더 낮은 저점(RSI 는 덜 낮음) → 반등
+        closes = [100 - i * 0.1 for i in range(20)]
+        closes += [98 - i * 2 for i in range(5)] + [91 + i for i in range(6)]     # 첫 저점 90 근처, 급락
+        closes += [95 - i * 0.6 for i in range(10)] + [91 + i for i in range(6)]  # 둘째 저점 89.x, 완만
+        bars = [{"time_us": f"20260924 {9 + i // 12:02d}{i % 12 * 5:02d}00", "open": c, "high": c + .1,
+                 "low": c - .1, "close": c, "volume": 1} for i, c in enumerate(closes)]
+        found = [d for d in dv.find(bars) if d.up]
+        self.assertTrue(found)
+        d = found[-1]
+        self.assertLess(bars[d.pivot]["low"], bars[d.prev]["low"])
+        self.assertEqual(d.confirm, d.pivot + dv.PIVOT_K)
 
     def fake_pages(self, bars):
         """fetch_bars 흉내: keyb 보다 앞(그 봉 포함) 최신 3개씩."""

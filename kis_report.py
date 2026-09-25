@@ -24,6 +24,7 @@ import sys
 import webbrowser
 from datetime import datetime
 
+import kis_diverge as dv
 import kis_replay as rp
 import kis_tf as tf
 import kis_web as w
@@ -431,6 +432,57 @@ def gate_table(rows, bases, mid, per_day, cost):
             f"<tr>{sub}{sub}</tr></thead><tbody>{''.join(trs)}</tbody></table>")
 
 
+def verdict_table(groups, bases, mid, per_day, cost):
+    """[(이름, 줄들)] 마다 한 줄: 몰린 것 하나로 센 건수·하루, 60분 맞음·초과·날 단위 90% 구간, 앞·뒤 절반 초과,
+    비용 뺀 60·120분, 60분 최대 역행. 보고서의 다른 잣대를 한 줄에 모은 것."""
+    trs = []
+    for label, rows in groups:
+        rs = dedupe(rows)
+        if not rs:
+            trs.append(f"<tr><th>{label}</th><td class='dim' colspan='11'>없음</td></tr>")
+            continue
+        band = day_band(rs, bases, 60)
+        bt = ("<td class='dim'>-</td>" if not band else
+              f"<td class='num {'pos sure' if band[0] > 0 else 'neg sure' if band[1] < 0 else 'dim'}'>{band[0]:+.2f} ~ {band[1]:+.2f}</td>")
+        halves = ""
+        for inside in (lambda r: day_of(r) < mid, lambda r: day_of(r) >= mid):
+            x = excess([r for r in rs if inside(r)], bases, 60)
+            halves += "<td class='dim'>-</td>" if x is None else f"<td class='num {'pos' if x > 0 else 'neg'}'>{x:+.2f}</td>"
+        money = ""
+        for h in (60, 120):
+            got = [r[h] for r in rs if r[h] is not None]
+            v = sum(got) / len(got) - cost if got else None
+            money += "<td class='dim'>-</td>" if v is None else f"<td class='num {'pos' if v > 0 else 'neg'}'>{v:+.2f}</td>"
+        maes = [r["mae"][60] for r in rs if r.get("mae") and r["mae"].get(60) is not None]
+        mae = f"{sum(maes) / len(maes):.2f}" if maes else "-"
+        trs.append(f"<tr><th>{label}</th><td class='num'>{len(rs)}</td><td class='num'>{len(rs) / per_day:.2f}</td>"
+                   f"{cell(rs, bases, 60)}{bt}{halves}{money}<td class='num neg'>{mae}</td></tr>")
+    head = ("<thead><tr><th rowspan='2'></th><th rowspan='2' class='num'>건수</th><th rowspan='2' class='num'>하루</th>"
+            "<th colspan='3'>60분 뒤</th><th colspan='2'>60분 초과 (절반씩)</th><th colspan='2'>비용 뺀%</th>"
+            "<th rowspan='2' class='num'>60분<br>최대 역행%</th></tr>"
+            "<tr><th class='num'>맞음</th><th class='num'>초과%</th><th class='num'>90% 구간</th>"
+            "<th class='num'>앞</th><th class='num'>뒤</th><th class='num'>60분</th><th class='num'>120분</th></tr></thead>")
+    return f"<table>{head}<tbody>{''.join(trs)}</tbody></table>"
+
+
+def divergence_section(info, all_rows, bases, mid, per_day, cost):
+    div = [r for i in info.values() for r in i.get("div", []) if main_session(r)]
+    five = [r for r in all_rows.get(tf.DIV_TF, []) if is_alert(r) and main_session(r)]
+    sig = [r for r in all_rows.get(tf.DIV_TF, []) if not is_alert(r) and main_session(r)]
+    groups = [
+        ("다이버전스 — RSI 만", div),
+        ("  · 상승 (오를 쪽)", [r for r in div if r["up"]]),
+        ("  · 하락 (내릴 쪽)", [r for r in div if not r["up"]]),
+        ("다이버전스 — RSI + MACD (이중)", [r for r in div if r["macd"]]),
+        ("다이버전스 — 이중 + 전날 저가·고가 근처", [r for r in div if r["macd"] and r["level"]]),
+        (f"{tf.DIV_TF}분봉 알림 — 모두 (지금)", five),
+        (f"  · 앞 {tf.DIV_TF * tf.DIV_RECENT}분 안에 같은 쪽 다이버전스", [r for r in five if r.get("div")]),
+        ("  · 다이버전스 없이", [r for r in five if not r.get("div")]),
+        (f"{tf.DIV_TF}분봉 매수·매도 시그널 (지금, 참고)", sig),
+    ]
+    return verdict_table(groups, bases, mid, per_day, cost)
+
+
 # ── 페이지 ────────────────────────────────────────────────────
 CSS = """
 :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6eb; --text:#1b1f24; --muted:#6b7380;
@@ -459,7 +511,7 @@ def build(offline=True, say=print, cost=COST):
     tf.k.load_kr_market()
     tickers = rp.collect_tickers()
     all_rows, bases, per_symb, ndays, info = tf.analyze(tickers, tf.TFS, offline=offline, say=say,
-                                                        line_sets=tf.LINE_SETS)
+                                                        line_sets=tf.LINE_SETS, diverge=True)
     if not all_rows:
         raise SystemExit("채점할 것이 없다 (1분봉이 없다 — --fetch 로 받거나 수집을 기다린다).")
     per_day = sum(ndays.values())   # 종목 하나 하루
@@ -505,6 +557,12 @@ def build(offline=True, say=print, cost=COST):
 <p class="dim"><b>비용 뺀%</b> = 평균 − {cost:.2f}%. <b>최대 역행%</b> = 들어간 뒤 그 시간 안에 반대로 가장 멀리 간 폭의 평균 (1분봉 저가·고가).
 맞음 비율이 높아도 역행이 크면 버티기 어렵다.</p>
 {money_table(all_rows, cost)}</section>""",
+        f"""<section><h2>다이버전스 — {tf.DIV_TF}분봉, 정규장 (몰린 것 하나로)</h2>
+<p class="dim">가격 저점은 낮아졌는데 RSI 저점은 높아졌으면 상승 다이버전스, 고점은 그 반대 (<code>kis_diverge.py</code>).
+저점·고점 = 앞뒤 {dv.PIVOT_K}봉보다 낮은(높은) 봉, 앞 점은 {dv.LOOKBACK}봉 안. 확인은 {dv.PIVOT_K}봉 뒤라 그만큼 늦게 들어간다.
+이중 = MACD 히스토그램도 같이 어긋남. 전날 저가·고가 근처 = 변동폭 절반 안 (영상의 「지지·저항 + 가짜 돌파」 흉내).
+아래 셋은 지금 알림을 다이버전스로 걸렀다면. 90% 구간이 0 위(초록)이고 앞·뒤 절반이 모두 + 이고 비용을 빼도 + 여야 쓸 만하다.</p>
+{divergence_section(info, all_rows, bases, mid, per_day, cost)}</section>""",
         f"""<section><h2>변동폭별 — 5분봉 알림, 정규장</h2>
 <p class="dim">변동폭 = 알림 때 그 앞 5분봉 14개의 평균 진폭(고가−저가) ÷ 가격. 알림을 변동폭 순으로 다섯 칸에 나눴다.
 <b>비용 뺀%</b> = 평균 수익 − {cost:.2f}% (사고팔 때 수수료·세금·호가 차이를 합쳐 이만큼 든다고 가정, <code>--cost</code> 로 바꾼다).

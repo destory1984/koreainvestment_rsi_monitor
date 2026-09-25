@@ -37,6 +37,7 @@ import sys
 from collections import defaultdict
 
 import kis_alert as al
+import kis_diverge as dv
 import kis_replay as rp
 import kis_rsi as k
 import kis_signal as ks
@@ -192,28 +193,62 @@ def scored(symb, minutes, events, kr, atr, rvol=None):
     return rows
 
 
-def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None):
-    """봉 길이마다 채점 줄들, 기준, (채점 첫날, 끝날, 날 수), 그리고 line_sets 의 선마다 LINE_TF 분봉 알림 채점 줄들."""
+DIV_TF = 5          # 다이버전스를 찾는 봉 길이
+DIV_RECENT = 12     # 알림 앞 이만큼 봉 안에 같은 쪽 다이버전스가 확인됐으면 「다이버전스 뒤 알림」
+
+
+def divergence_rows(symb, minutes, groups, period, start, kr, atr, rvol):
+    """DIV_TF 분봉 다이버전스를 신호로 채점한 줄들. 신호는 확인 봉의 마지막 1분봉에서 들어간다.
+    줄마다 macd(이중 다이버전스), level(전날 저가·고가 근처) 도 붙인다. (줄들, 다이버전스들)"""
+    found = dv.find([b for b, _ in groups], period)
+    use = [d for d in found if groups[d.confirm][1][-1] >= start]
+    events = [{"i": groups[d.confirm][1][-1], "up": d.up, "rsi": 0.0,
+               "kind": "다이버전스 " + ("상승" if d.up else "하락")} for d in use]
+    rows = scored(symb, minutes, events, kr, atr, rvol)
+    for r, d in zip(rows, use):
+        r["macd"], r["level"] = d.macd, d.level
+    return rows, found
+
+
+def tag_after_divergence(rows, events, groups, found, recent=DIV_RECENT):
+    """DIV_TF 분봉 알림 줄마다 div: 앞 recent 봉 안(알림 봉 포함)에 같은 쪽 다이버전스가 확인됐나."""
+    bar_of = {i: n for n, (_, idx) in enumerate(groups) for i in idx}
+    confirms = {True: [d.confirm for d in found if d.up], False: [d.confirm for d in found if not d.up]}
+    for r, e in zip(rows, events):
+        b = bar_of[e["i"]]
+        r["div"] = any(b - recent <= c <= b for c in confirms[e["up"]])
+
+
+def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None, diverge=False):
+    """봉 길이마다 채점 줄들, 기준, (채점 첫날, 끝날, 날 수), 그리고 더 본 것 {"lines": 선마다 LINE_TF 분봉 알림 줄들,
+    "div": 다이버전스 신호 줄들}. diverge 면 DIV_TF 분봉 알림 줄에 div 표시도 붙인다."""
     days = sorted({m["time_us"][:8] for m in minutes})
     if len(days) <= WARMUP_DAYS:
         return {}, {}, None, {}
     start_day = days[WARMUP_DAYS]
     start = next(i for i, m in enumerate(minutes) if m["time_us"][:8] >= start_day)
     rows, atr, rvol = {}, atr_pct(minutes), rel_volume(minutes, kr)
+    extra = {}
+    if diverge:
+        g = aggregate(minutes, DIV_TF)
+        extra["div"], found = divergence_rows(symb, minutes, g, period, start, kr, atr, rvol)
     for tf in tfs:
         groups = aggregate(minutes, tf)
         events = walk_alerts(minutes, groups, period, lines) + walk_signals(groups, period, lines)
         events = [e for e in events if e["i"] >= start]
         rows[tf] = scored(symb, minutes, events, kr, atr, rvol)
+        if diverge and tf == DIV_TF:
+            tag_after_divergence(rows[tf], events, groups, found)
     by_lines = {}
     if line_sets:
         groups = aggregate(minutes, LINE_TF)
         for name, ln in line_sets.items():
             events = [e for e in walk_alerts(minutes, groups, period, al.Lines.parse(ln)) if e["i"] >= start]
             by_lines[name] = scored(symb, minutes, events, kr, atr, rvol)
+    extra["lines"] = by_lines
     # 기준: 채점 구간의 아무 분에서나 (WARMUP 봉은 이미 앞에서 지났으니 0 부터)
     base = baseline(minutes[start:], kr)
-    return rows, base, (start_day, days[-1], len(days) - WARMUP_DAYS), by_lines
+    return rows, base, (start_day, days[-1], len(days) - WARMUP_DAYS), extra
 
 
 def baseline(minutes, kr):
@@ -257,7 +292,7 @@ def table(title, rows_by_tf, bases, ndays, pick=None):
         print(f"{tf:>3}분{len(rs):>6}{per_day:>6.1f}  " + "".join(f"{'':>3}{fmt(stats(rs, bases, h))}" for h in HORIZONS))
 
 
-def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, line_sets=None):
+def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, line_sets=None, diverge=False):
     """종목마다 1분봉을 (이어 받아) 봉 길이별로 채점한다.
     (봉 길이 -> 모든 종목 채점 줄, 종목 -> 기준, 종목 -> {봉 길이: 줄}, 종목 -> 채점 날 수, 종목 -> 정보).
     line_sets 를 주면 정보에 "lines": {선 이름: 줄} 도 (LINE_TF 분봉 알림만)."""
@@ -283,7 +318,7 @@ def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, l
             say(f"{symb}: 1분봉 없음 (수집을 기다린다)")
             continue
         kr = excd == "KRX"
-        rows, base, span, by_lines = run_ticker(symb, minutes, tfs, period, rp.lines_for(symb, lines), kr, line_sets)
+        rows, base, span, extra = run_ticker(symb, minutes, tfs, period, rp.lines_for(symb, lines), kr, line_sets, diverge)
         if not span:
             say(f"{symb}: 날이 모자람 ({len(minutes)} 분)")
             continue
@@ -291,7 +326,7 @@ def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, l
         for tf, rs in rows.items():
             all_rows[tf] += rs
         info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2],
-                      "lines": by_lines, "now": rp.lines_for(symb, lines)}
+                      "lines": extra.get("lines", {}), "div": extra.get("div", []), "now": rp.lines_for(symb, lines)}
         name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
         say(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "
               + " ".join(f"{tf}분 {len(rs)}" for tf, rs in rows.items()))
