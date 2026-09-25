@@ -80,8 +80,9 @@ def rsi_band(bars, period=14):
     return out
 
 
-def signals(bars, period=14, arm_bars=ARM_BARS):
-    """닫힌 봉들에서 난 시그널 전부 (오래된 것부터)."""
+def signals(bars, period=14, arm_bars=ARM_BARS, lines=None):
+    """닫힌 봉들에서 난 시그널 전부 (오래된 것부터). lines 는 그 종목의 RSI 선 (없으면 기본)."""
+    ln = lines or al.DEFAULT_LINES
     band = rsi_band(bars, period)
     line, sig, hist = k.macd_series([b["close"] for b in bars])
     out = []
@@ -99,12 +100,12 @@ def signals(bars, period=14, arm_bars=ARM_BARS):
             arm[side][0] = max(0, arm[side][0] - 1)
             if not arm[side][0]:
                 disarm(side)
-        if lo <= al.LOWER:
+        if lo <= ln.lower:
             a = arm["buy"]
             a[0] = arm_bars
             if lo < a[1]:
                 a[1], a[2] = lo, i
-        if hi >= al.UPPER:
+        if hi >= ln.upper:
             a = arm["sell"]
             a[0] = arm_bars
             if hi > a[1]:
@@ -117,8 +118,8 @@ def signals(bars, period=14, arm_bars=ARM_BARS):
             if not left or at is None:
                 continue
             buy = side == "buy"
-            if (prev <= al.LOWER < r) if buy else (prev >= al.UPPER > r):
-                out.append(Signal(side, "강" if (ext <= al.STRONG_LOWER if buy else ext >= al.STRONG_UPPER) else "약",
+            if (prev <= ln.lower < r) if buy else (prev >= ln.upper > r):
+                out.append(Signal(side, "강" if (ext <= ln.strong_lower if buy else ext >= ln.strong_upper) else "약",
                                   "추세 순응" if (line[i] > 0 if buy else line[i] < 0) else "역추세",
                                   b["time_us"], r, ext, line[i], sig[i], hist[i]))
                 disarm(side)

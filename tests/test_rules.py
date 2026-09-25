@@ -93,6 +93,64 @@ class GateTest(unittest.TestCase):
         self.assertIn("42 이상", g.check(34, now=N + 10_001)["suppressed"])
 
 
+# ── 종목별 선 ──────────────────────────────────────────────────
+class LinesTest(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(al.Lines.parse([25, 75]), al.Lines(20, 25, 75, 80))
+        self.assertEqual(al.Lines.parse(["20", "25", "75", "80"]), al.Lines(20, 25, 75, 80))
+        for bad in ([35, 30, 65, 70], [30, 35, 65], [-5, 0, 65, 70], [30, 35, 65, 101], [50, 50]):
+            with self.assertRaises(ValueError, msg=bad):
+                al.Lines.parse(bad)
+
+    def test_gate_uses_lines(self):
+        g = al.Gate(al.Lines(20, 25, 75, 80))
+        g.check(50, now=N)
+        self.assertIsNone(g.check(70, now=N + 1))              # 기본이면 70 초과지만 이 종목은 밴드 안
+        a = g.check(76, now=N + 2)
+        self.assertEqual((a["kind"], a["edge"]), ("above", 75))
+        g.check(70, now=N + 10_000)                             # 75 - 7 = 68 까지 안 내려옴 → 재무장 안 됨
+        self.assertIn("68 이하", g.check(76, now=N + 10_001)["suppressed"])
+
+    def test_signals_use_lines(self):
+        bars = SignalTest().v_shape(15, 15)
+        low = min(r for r, lo, hi in ks.rsi_band(bars) if r is not None)
+        wide = al.Lines(low - 10, low - 5, 95, 99)             # 떨어진 RSI 보다 더 아래에 선
+        self.assertTrue(ks.signals(bars))
+        self.assertEqual([x for x in ks.signals(bars, lines=wide) if x.side == "buy"], [])
+
+    def test_server_set_lines(self):
+        h = w.Hub.__new__(w.Hub)
+        h.settings = {"lines": {}}
+        h.books = {"SOXL": types.SimpleNamespace(symb="SOXL", bars=SignalTest().v_shape(15, 15))}
+        h.gates, h.signals, h.sup_seen, h.period = {}, {}, {("SOXL", "above", "쿨다운")}, 14
+        h.prefetch = lambda books: None
+        sent = []
+
+        async def bc(m):
+            sent.append(m)
+        h.broadcast = bc
+        h.row = lambda b: {"symb": b.symb, "lines": h.lines(b.symb)._asdict()}
+        with mock.patch.object(w, "SETTINGS", temp_path(".json")):
+            asyncio.run(h.set_lines("SOXL", [25, 75]))
+            self.assertEqual(h.settings["lines"]["SOXL"], [20, 25, 75, 80])
+            self.assertEqual(h.gates["SOXL"].lines, al.Lines(20, 25, 75, 80))
+            self.assertEqual(h.sup_seen, set())
+            self.assertEqual(sent[-1]["rows"][0]["lines"]["upper"], 75)
+            asyncio.run(h.set_lines("SOXL", [30, 35, 65, 70]))       # 기본과 같으면 설정에서 지운다
+            self.assertNotIn("SOXL", h.settings["lines"])
+            with self.assertRaises(ValueError):
+                asyncio.run(h.set_lines("SOXL", [70, 30]))
+        h.settings["lines"]["X"] = "망가진 값"
+        self.assertEqual(h.lines("X"), al.DEFAULT_LINES)
+
+    def test_replay_lines_for(self):
+        self.assertEqual(rp.lines_for("A", "25,75"), al.Lines(20, 25, 75, 80))
+        with mock.patch.object(rp, "SETTINGS", temp_path(".json")):
+            self.assertEqual(rp.lines_for("A"), al.DEFAULT_LINES)
+            rp.SETTINGS.write_text(json.dumps({"lines": {"A": [10, 20, 80, 90]}}), encoding="utf-8")
+            self.assertEqual(rp.lines_for("A"), al.Lines(10, 20, 80, 90))
+
+
 # ── RSI·시그널 ─────────────────────────────────────────────────
 class SignalTest(unittest.TestCase):
     def test_band_close_matches_rsi_series(self):

@@ -57,6 +57,7 @@ DB 로 둔 까닭: 30분마다 도는 --collect 와 손으로 돌리는 되감�
   python kis_replay.py --list            하나씩 다 보기
   python kis_replay.py --csv scored.csv  엑셀로 볼 것
   python kis_replay.py --offline         새로 받지 않고 쌓아 둔 것만
+  python kis_replay.py SOXL --lines 25,75  이 선이었다면 (강한 선은 5 바깥, 넷을 다 줘도 된다)
   python kis_replay.py --collect         주간거래 분봉만 받아 쌓기 (30분마다 돌리는 용도)
 
 ────────────────────────────────────────────────────────────
@@ -290,9 +291,19 @@ def load_bars(con, appkey, secret, excd, symb, nmin, days, offline):
 
 
 # ── 되감기 ────────────────────────────────────────────────────
-def replay_alerts(bars, period):
+def lines_for(symb, override=None):
+    """되감기에 쓸 종목 RSI 선: --lines → kis_settings.json 의 "lines" → 기본."""
+    if override:
+        return al.Lines.parse(override.split(","))
+    try:
+        return al.Lines.parse(json.loads(SETTINGS.read_text(encoding="utf-8"))["lines"][symb])
+    except Exception:
+        return al.DEFAULT_LINES
+
+
+def replay_alerts(bars, period, lines=None):
     """봉마다 저가·고가·종가 RSI 를 Gate 에 흘려 넣고, 울렸을 알림을 모은다 (억제된 것은 뺀다)."""
-    gate, out = al.Gate(), []
+    gate, out = al.Gate(lines), []
     for i, (b, (rc, rlo, rhi)) in enumerate(zip(bars, ks.rsi_band(bars, period))):
         if rc is None:
             continue
@@ -306,11 +317,11 @@ def replay_alerts(bars, period):
     return out
 
 
-def replay_signals(bars, period):
+def replay_signals(bars, period, lines=None):
     """닫힌 봉 전체로 시그널을 다시 낸다. 실시간과 같이 진행 중인 마지막 봉은 뺀다."""
     at = {b["time_us"]: i for i, b in enumerate(bars)}
     return [{"i": at[x.bar], "kind": f"{x.word} {x.grade}", "up": x.side == "buy", "rsi": x.rsi}
-            for x in ks.signals(bars[:-1], period)]
+            for x in ks.signals(bars[:-1], period, lines=lines)]
 
 
 def exit_index(bars, i, minutes):
@@ -376,8 +387,13 @@ def summarize(rows, bases, horizon, by):
                     "flat": (len(got) - len(moved)) / len(got) if got else None,
                     "avg": avg, "base": bavg,
                     "excess": None if avg is None or bavg is None else avg - bavg})
-    order = {kd: n for n, kd in enumerate(KIND_ORDER)}
-    return sorted(out, key=lambda x: (str(x["group"]), order.get(x["kind"], 99)))
+    def kind_key(kd):
+        # 알림은 선 숫자 차례(미만 먼저), 그다음 시그널. 종목별 선이면 「25 미만」 같은 것도 온다
+        if kd.startswith("알림 "):
+            n = float(kd.split()[1])
+            return (0, n if "미만" in kd else 100 + n)
+        return (1, KIND_ORDER.index(kd) if kd in KIND_ORDER else 99)
+    return sorted(out, key=lambda x: (str(x["group"]), kind_key(x["kind"])))
 
 
 def pct(x, width=7, sign=True):
@@ -419,6 +435,8 @@ def main():
     ap.add_argument("--by", choices=["세션", "종목"], help="이것별로 나눠 보기")
     ap.add_argument("--list", action="store_true", help="하나씩 다 보기")
     ap.add_argument("--csv", help="채점 결과를 이 파일에 적기")
+    ap.add_argument("--lines", help="모든 종목에 이 RSI 선을 써 본다: 25,75 나 20,25,75,80 "
+                                    "(없으면 kis_settings.json 의 종목별 선, 그것도 없으면 30·35·65·70)")
     ap.add_argument("--offline", action="store_true", help="새로 받지 않고 replay_cache 만 쓰기")
     ap.add_argument("--collect", action="store_true", help="주간거래 분봉만 받아 쌓고 끝내기")
     args = ap.parse_args()
@@ -444,7 +462,8 @@ def main():
         except Exception as e:
             print(f"{symb}: 건너뜀 — {e}")
             continue
-        events = replay_alerts(bars, args.period) + replay_signals(bars, args.period)
+        ln = lines_for(symb, args.lines)
+        events = replay_alerts(bars, args.period, ln) + replay_signals(bars, args.period, ln)
         kr = excd == "KRX"
         rows += score(symb, bars, events, HORIZONS, kr)
         bases[symb] = baseline(bars, HORIZONS, kr)

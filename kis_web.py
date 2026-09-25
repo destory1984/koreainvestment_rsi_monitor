@@ -68,6 +68,7 @@ class Hub:
         self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
+        self.settings.setdefault("lines", {})        # 종목 -> [강한 아래, 아래, 위, 강한 위]. 없으면 기본 30·35·65·70
         self.tg = tg.Telegram()
         self.signals = {}         # 종목 -> 닫힌 봉들에서 난 시그널 전부
         self.closed = set()       # 새 봉이 생겨 앞 봉이 닫힌 종목
@@ -112,7 +113,7 @@ class Hub:
     def prefetch(self, books):
         texts = [t for t in self.greetings() if t]
         for b in books:
-            texts += al.phrases(b.name, b.symb)
+            texts += al.phrases(b.name, b.symb, self.lines(b.symb))
         missing = sum(not self.voice.cached(t) for t in texts)
         if missing and self.voice.prefetch(texts, lambda made, n: print(
                 f"알림 문장 {made}/{n}개 만듦" + ("" if made == n else f" — {self.voice.last_error}"),
@@ -229,7 +230,7 @@ class Hub:
         self.save_settings()
         async with self.lock:
             book.bars, book.night = await asyncio.to_thread(self._bars, book.excd, symb)
-            self.signals[symb] = ks.signals(book.bars[:-1], self.period)
+            self.signals[symb] = ks.signals(book.bars[:-1], self.period, lines=self.lines(symb))
             self.tf[symb] = await asyncio.to_thread(self._tf_books, book)
         await self.broadcast({"type": "reload"})
 
@@ -255,8 +256,8 @@ class Hub:
             except Exception as e:
                 print(f"{symb}: 현재가 못 받음 — {e}", flush=True)
         self.books[symb] = book
-        self.gates[symb] = al.Gate()
-        self.signals[symb] = ks.signals(bars[:-1], self.period)
+        self.gates[symb] = al.Gate(self.lines(symb))
+        self.signals[symb] = ks.signals(bars[:-1], self.period, lines=self.lines(symb))
         time.sleep(0.1)
         return book, True
 
@@ -282,8 +283,10 @@ class Hub:
             self.signals.pop(symb, None)
             self.tf.pop(symb, None)
             self.save()
-            if symb in self.settings["mute"]:
-                self.settings["mute"].remove(symb)
+            if symb in self.settings["mute"] or symb in self.settings["lines"]:
+                if symb in self.settings["mute"]:
+                    self.settings["mute"].remove(symb)
+                self.settings["lines"].pop(symb, None)
                 self.save_settings()
             self.dirty.discard(symb)
             if self.ws:
@@ -308,7 +311,7 @@ class Hub:
         """끊겼다 붙으면 그 사이 체결을 놓쳤으니 분봉을 새로 받는다."""
         for b in list(self.books.values()):
             b.bars, b.night = self._bars(b.excd, b.symb)
-            self.signals[b.symb] = ks.signals(b.bars[:-1], self.period)
+            self.signals[b.symb] = ks.signals(b.bars[:-1], self.period, lines=self.lines(b.symb))
             self.tf[b.symb] = self._tf_books(b)
             time.sleep(0.1)
 
@@ -490,7 +493,7 @@ class Hub:
             if not b or len(b.bars) < 3:
                 continue
             old = {(x.bar, x.side) for x in self.signals.get(s, [])}
-            self.signals[s] = ks.signals(b.bars[:-1], self.period)
+            self.signals[s] = ks.signals(b.bars[:-1], self.period, lines=self.lines(s))
             just = b.bars[-2]["time_us"]
             for x in self.signals[s]:
                 if x.bar != just or (x.bar, x.side) in old:
@@ -581,6 +584,31 @@ class Hub:
             return f"{SOUND_SESSIONS[key]} 소리 끔"
         return ""
 
+    def lines(self, symb):
+        """그 종목의 RSI 선. 설정에 없거나 틀렸으면 기본."""
+        try:
+            return al.Lines.parse(self.settings["lines"][symb])
+        except (KeyError, ValueError, TypeError):
+            return al.DEFAULT_LINES
+
+    async def set_lines(self, symb, values):
+        """종목 선을 바꾼다 (values 가 None 이거나 기본과 같으면 기본으로). 알림 상태를 새로 시작하고 시그널을 다시 셈한다."""
+        book = self.books.get(symb)
+        if not book:
+            raise KeyError(symb)
+        ln = al.Lines.parse(values) if values else al.DEFAULT_LINES   # 틀리면 ValueError
+        if ln == al.DEFAULT_LINES:
+            self.settings["lines"].pop(symb, None)
+        else:
+            self.settings["lines"][symb] = list(ln)
+        self.save_settings()
+        self.gates[symb] = al.Gate(ln)
+        self.sup_seen = {x for x in self.sup_seen if x[0] != symb}
+        self.signals[symb] = ks.signals(book.bars[:-1], self.period, lines=ln)
+        self.prefetch([book])   # 「25 미만」 같은 새 문장
+        await self.broadcast({"type": "rows", "rows": [self.row(book)]})
+        return ln
+
     async def set_mute(self, symb, on):
         if symb not in self.books:
             raise KeyError(symb)
@@ -610,7 +638,8 @@ class Hub:
                 "time": b.us_time, "day": b.day_quote, "night": b.night, **ind,
                 "mute": b.symb in self.settings["mute"],
                 "mtf": self.mtf(b, ind["rsi"]),
-                "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
+                "zone": al.level_of(ind["rsi"], self.lines(b.symb)) if ind["rsi"] is not None else ("neutral", ""),
+                "lines": self.lines(b.symb)._asdict(),
                 "rearm": bool(g and not all(g.armed.values())),
                 "last_alert": self.last_alert(b.symb),
                 "last_signal": self.last_signal(b.symb),
@@ -782,6 +811,18 @@ async def api_mute(symb: str = Body(...), on: bool = Body(...)):
     return {"symb": symb.upper(), "mute": on}
 
 
+@app.post("/api/lines")
+async def api_lines(symb: str = Body(...), lines: list = Body(None)):
+    """종목 RSI 선. lines 는 [강한 아래, 아래, 위, 강한 위] 나 [아래, 위]. null 이면 기본(30·35·65·70)으로."""
+    try:
+        ln = await hub.set_lines(symb.upper(), lines)
+    except KeyError:
+        raise HTTPException(404, symb)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    return {"symb": symb.upper(), "lines": ln._asdict()}
+
+
 @app.post("/api/sound-when")
 def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None)):
     """소리 나는 때. sessions 는 {"day": true, ...}, quiet 는 {"on", "from": "HH:MM", "to": "HH:MM"}."""
@@ -830,7 +871,7 @@ async def api_telegram_test():
 def api_sound_test(symb: str = Body("", embed=True)):
     """소리 시험. 그 종목의 65 초과 문장을 말머리와 함께 읽는다."""
     b = hub.books.get(symb.upper()) or next(iter(hub.books.values()), None)
-    text = al.say_breach(b.name, b.symb, True, al.UPPER) if b else "소리 시험"
+    text = al.say_breach(b.name, b.symb, True, hub.lines(b.symb).upper) if b else "소리 시험"
     hub.voice.say(text, "short")
     return {"text": text, "engine": hub.voice.engine(), "cached": hub.voice.cached(text)}
 

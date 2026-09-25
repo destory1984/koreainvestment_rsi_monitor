@@ -27,6 +27,7 @@ import urllib.request
 import wave
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 # ── 경고선 ─────────────────────────────────────────────────────
 LOWER, UPPER = 35.0, 65.0
@@ -94,12 +95,13 @@ def say_signal(name, symb, side):
     return f"{spell(name, symb)} {'매수' if side == 'buy' else '매도'} 시그널"
 
 
-def phrases(name, symb):
+def phrases(name, symb, lines=None):
     """이 종목으로 읽을 수 있는 문장 전부. 미리 만들어 둘 때 쓴다."""
-    out = [say_breach(name, symb, True, UPPER), say_breach(name, symb, False, LOWER),
+    ln = lines or DEFAULT_LINES
+    out = [say_breach(name, symb, True, ln.upper), say_breach(name, symb, False, ln.lower),
            say_signal(name, symb, "buy"), say_signal(name, symb, "sell")]
     if SAY_STRONG:
-        out += [say_breach(name, symb, True, STRONG_UPPER), say_breach(name, symb, False, STRONG_LOWER)]
+        out += [say_breach(name, symb, True, ln.strong_upper), say_breach(name, symb, False, ln.strong_lower)]
     return out
 
 
@@ -107,31 +109,54 @@ def phrases(name, symb):
 RANK = {"": 0, "warn": 1, "strong": 2}
 
 
-def level_of(v):
-    if v > STRONG_UPPER:
+class Lines(NamedTuple):
+    """RSI 선 넷. 종목마다 다르게 둘 수 있다 (웹 설정 "lines"). 기본은 30·35·65·70."""
+    strong_lower: float
+    lower: float
+    upper: float
+    strong_upper: float
+
+    @classmethod
+    def parse(cls, values):
+        """[30, 35, 65, 70] 이나 [35, 65](강한 선은 5 바깥) 를 받아 Lines. 차례가 틀리면 ValueError."""
+        v = [float(x) for x in values]
+        if len(v) == 2:
+            v = [v[0] - 5, v[0], v[1], v[1] + 5]
+        if len(v) != 4 or not (0 <= v[0] < v[1] < v[2] < v[3] <= 100):
+            raise ValueError("선은 0 ≤ 강한 아래 < 아래 < 위 < 강한 위 ≤ 100 이어야 한다")
+        return cls(*v)
+
+
+DEFAULT_LINES = Lines(STRONG_LOWER, LOWER, UPPER, STRONG_UPPER)
+
+
+def level_of(v, lines=None):
+    ln = lines or DEFAULT_LINES
+    if v > ln.strong_upper:
         return "above", "strong"
-    if v > UPPER:
+    if v > ln.upper:
         return "above", "warn"
-    if v < STRONG_LOWER:
+    if v < ln.strong_lower:
         return "below", "strong"
-    if v < LOWER:
+    if v < ln.lower:
         return "below", "warn"
     return "neutral", ""
 
 
-def edge_of(zone, strength):
+def edge_of(zone, strength, lines=None):
+    ln = lines or DEFAULT_LINES
     if zone == "above":
-        return STRONG_UPPER if strength == "strong" else UPPER
-    return STRONG_LOWER if strength == "strong" else LOWER
+        return ln.strong_upper if strength == "strong" else ln.upper
+    return ln.strong_lower if strength == "strong" else ln.lower
 
 
 class Gate:
     """종목 하나의 알림 상태. rsi_monitor.py 의 Target 알림 부분과 같다."""
 
-    EDGES = {"above": (UPPER, True), "below": (LOWER, False),
-             "above_strong": (STRONG_UPPER, True), "below_strong": (STRONG_LOWER, False)}
-
-    def __init__(self):
+    def __init__(self, lines=None):
+        self.lines = ln = lines or DEFAULT_LINES
+        self.EDGES = {"above": (ln.upper, True), "below": (ln.lower, False),
+                      "above_strong": (ln.strong_upper, True), "below_strong": (ln.strong_lower, False)}
         self.level = ("unknown", "")
         self.last_alert = {}
         self.armed = {}
@@ -140,7 +165,7 @@ class Gate:
         """새 RSI 를 보고 알릴 것이 있으면 dict, 없으면 None. 억제된 것은 suppressed 에 이유를 단다.
         now 는 쿨다운을 셀 시각(초). 되감기에서 봉 시각을 넘긴다. 없으면 지금."""
         now = time.time() if now is None else now
-        zone, strength = level_of(v)
+        zone, strength = level_of(v, self.lines)
         prev_zone, prev_str = self.level
         self.level = (zone, strength)
         out = None
@@ -148,7 +173,7 @@ class Gate:
                                   or RANK[strength] > RANK[prev_str]):
             kind = zone if strength == "warn" else f"{zone}_strong"
             out = {"kind": kind, "zone": zone, "strength": strength,
-                   "edge": edge_of(zone, strength), "start": prev_zone == "unknown"}
+                   "edge": edge_of(zone, strength, self.lines), "start": prev_zone == "unknown"}
             why = self._gate(kind, now)
             if why:
                 out["suppressed"] = why

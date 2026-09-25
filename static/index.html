@@ -110,7 +110,10 @@
   .mtf { display: inline-flex; gap: 3px; }
   .mtf > span:not(.dim) { display: inline-block; min-width: 1.6em; text-align: right; }
   .ntag { cursor: pointer; margin: 0 0 0 4px; }
-  .ntag.manual { border-color: var(--down); color: var(--down); }
+  .ntag.manual, .tag.manual { border-color: var(--down); color: var(--down); }
+  .zcell { cursor: pointer; }
+  #msg .lnum { width: calc(var(--fs) * 4); font: inherit; background: var(--input); color: var(--text);
+               border: 1px solid var(--line); border-radius: 4px; padding: 1px 3px; }
   .linkbtn { font: inherit; border: 0; background: none; color: var(--down); cursor: pointer; padding: 0 2px;
              text-decoration: underline; }
   .tag { font-size: calc(var(--fs) * .8); color: var(--muted); border: 1px solid var(--line); border-radius: 3px;
@@ -236,15 +239,20 @@ function setMsg(s, err) {
 }
 
 // 막대 칠: 30 아래 진한 파랑, 30~35 옅은 파랑, 35~65 회색(밴드 안), 65~70 옅은 빨강, 70 위 진한 빨강
-let _gauge = "";
-function gaugeBg() {
-  if (_gauge) return _gauge;
+const _gauge = {};
+// 종목 선 (서버가 줄마다 준다). 없으면 기본
+const linesOf = r => (r && r.lines) || cfg;
+function gaugeBg(ln = cfg) {
+  const a = ln.strong_lower, b = ln.lower, c = ln.upper, d = ln.strong_upper, key = [a, b, c, d].join();
+  if (_gauge[key]) return _gauge[key];
   const cold = css("--cold"), hot = css("--hot"), mid = css("--line");
   const soft = c => `color-mix(in srgb, ${c} 45%, ${mid})`;
-  const a = cfg.strong_lower, b = cfg.lower, c = cfg.upper, d = cfg.strong_upper;
-  return _gauge = `linear-gradient(to right, ${cold} 0 ${a}%, ${soft(cold)} ${a}% ${b}%, ${mid} ${b}% ${c}%, ` +
-                  `${soft(hot)} ${c}% ${d}%, ${hot} ${d}% 100%)`;
+  return _gauge[key] = `linear-gradient(to right, ${cold} 0 ${a}%, ${soft(cold)} ${a}% ${b}%, ${mid} ${b}% ${c}%, ` +
+                       `${soft(hot)} ${c}% ${d}%, ${hot} ${d}% 100%)`;
 }
+const rsiClass = (v, ln) => v < ln.strong_lower ? "cold strong" : v < ln.lower ? "cold"
+                          : v > ln.strong_upper ? "hot strong" : v > ln.upper ? "hot" : "";
+const customLines = r => r && r.lines && ["strong_lower", "lower", "upper", "strong_upper"].some(k => r.lines[k] !== cfg[k]);
 
 // RSI 가 오르면 1, 내리면 -1, 그대로면 0
 function rsiTrend(r) {
@@ -255,12 +263,11 @@ function rsiTrend(r) {
 
 function rsiCell(r) {
   if (r.rsi == null) return "-";
-  const v = r.rsi;
-  const cls = v < cfg.strong_lower ? "cold strong" : v < cfg.lower ? "cold"
-            : v > cfg.strong_upper ? "hot strong" : v > cfg.upper ? "hot" : "";
+  const v = r.rsi, ln = linesOf(r);
+  const cls = rsiClass(v, ln);
   const trend = ['<span class="trend down">▼</span>', '<span class="trend dim">—</span>',
                  '<span class="trend up">▲</span>'][rsiTrend(r) + 1];
-  return `<span class="rsi"><span class="gauge" style="background:${gaugeBg()}">` +
+  return `<span class="rsi"><span class="gauge" style="background:${gaugeBg(ln)}">` +
          `<i style="left:calc(${Math.max(0, Math.min(100, v))}% - 1.5px)"></i></span>` +
          `<span class="${cls}">${fr(v)}</span>${trend}</span>${nightTag(r)}`;
 }
@@ -317,9 +324,7 @@ function mtfCell(r) {
   if (!m) return "";
   const one = v => {
     if (v == null) return '<span class="dim">-</span>';
-    const cls = v < cfg.strong_lower ? "cold strong" : v < cfg.lower ? "cold"
-              : v > cfg.strong_upper ? "hot strong" : v > cfg.upper ? "hot" : "";
-    return `<span class="${cls}">${fr(v)}</span>`;
+    return `<span class="${rsiClass(v, linesOf(r))}">${fr(v)}</span>`;
   };
   const keys = Object.keys(m).sort((a, b) => a - b);
   return `<span class="mtf" title="${keys.map(k => `${k}분 ${m[k] == null ? "-" : fr(m[k])}`).join(" · ")}">` +
@@ -327,13 +332,45 @@ function mtfCell(r) {
 }
 
 function zoneCell(r) {
-  const [zone, strength] = r.zone || ["neutral", ""];
-  if (zone === "neutral") return `<span class="dim">밴드 안${r.rearm ? " · 재무장 대기" : ""}</span>`;
-  const edge = zone === "above" ? (strength === "strong" ? cfg.strong_upper : cfg.upper)
-                                : (strength === "strong" ? cfg.strong_lower : cfg.lower);
+  const [zone, strength] = r.zone || ["neutral", ""], ln = linesOf(r);
+  // 종목 선을 바꾼 종목만 선을 보인다. 칸을 누르면 바꾼다
+  const tag = customLines(r) ? `<span class="tag manual">${ln.lower}/${ln.upper}</span>` : "";
+  const open = `<span class="zcell" data-symb="${esc(r.symb)}" ` +
+               `title="이 종목 RSI 선 ${ln.strong_lower}·${ln.lower}·${ln.upper}·${ln.strong_upper}. 누르면 바꾼다">`;
+  if (zone === "neutral") return open + tag + `<span class="dim">밴드 안${r.rearm ? " · 재무장 대기" : ""}</span></span>`;
+  const edge = zone === "above" ? (strength === "strong" ? ln.strong_upper : ln.upper)
+                                : (strength === "strong" ? ln.strong_lower : ln.lower);
   const cls = (zone === "above" ? "hot" : "cold") + (strength === "strong" ? " strong" : "");
-  return `<span class="${cls}">${edge} ${zone === "above" ? "초과" : "미만"}</span>`;
+  return open + tag + `<span class="${cls}">${edge} ${zone === "above" ? "초과" : "미만"}</span></span>`;
 }
+
+// 종목 선 바꾸기: 알림 줄에 칸 넷을 띄운다 (강한 아래·아래·위·강한 위)
+function editLines(symb) {
+  const r = rows[symb];
+  if (!r) return;
+  const ln = linesOf(r), keys = ["strong_lower", "lower", "upper", "strong_upper"];
+  $("#msg").className = "sub";
+  $("#msg").innerHTML = `${esc(r.excd === "KRX" ? r.name : symb)} RSI 선: ` +
+    keys.map(k => `<input class="lnum" type="number" min="0" max="100" step="1" value="${ln[k]}" data-k="${k}" ` +
+                  `aria-label="${{ strong_lower: "강한 아래", lower: "아래", upper: "위", strong_upper: "강한 위" }[k]}">`).join(" ") +
+    ` <button type="button" class="linkbtn" id="lnsave">저장</button>` +
+    ` <button type="button" class="linkbtn" id="lnreset">기본(${cfg.strong_lower}·${cfg.lower}·${cfg.upper}·${cfg.strong_upper})</button>` +
+    ` <span class="dim">바꾸면 이 종목 알림 상태가 새로 시작한다</span>`;
+  const post = async lines => {
+    const res = await fetch("/api/lines", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ symb, lines }) }).catch(() => null);
+    if (!res || !res.ok) return setMsg(`${symb} 선을 바꾸지 못했다` + (res ? " — " + (await res.json()).detail : ""), true);
+    const j = await res.json();
+    setMsg(`${symb}: RSI 선 ${j.lines.strong_lower}·${j.lines.lower}·${j.lines.upper}·${j.lines.strong_upper}`);
+    if (symb === selected) setTimeout(() => select(symb), 300);   // 차트 선도 새로
+  };
+  $("#lnsave").onclick = () => post([...$("#msg").querySelectorAll(".lnum")].map(x => +x.value));
+  $("#lnreset").onclick = () => post(null);
+}
+$("#rows").addEventListener("click", e => {
+  const t = e.target.closest(".zcell");
+  if (t) editLines(t.dataset.symb);
+});
 
 function lastCell(r) {
   const a = r.last_alert;
@@ -490,10 +527,13 @@ function makeCharts() {
     macd: macd.addLineSeries({ color: css("--down"), lineWidth: 2, priceLineVisible: false }),
     signal: macd.addLineSeries({ color: "#e69a28", lineWidth: 2, priceLineVisible: false }),
   };
-  s.rsi.createPriceLine({ price: cfg.upper, color: css("--hot"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
-  s.rsi.createPriceLine({ price: cfg.lower, color: css("--cold"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
-  s.rsi.createPriceLine({ price: cfg.strong_upper, color: css("--hot"), lineStyle: 1, lineWidth: 1, axisLabelVisible: false });
-  s.rsi.createPriceLine({ price: cfg.strong_lower, color: css("--cold"), lineStyle: 1, lineWidth: 1, axisLabelVisible: false });
+  // 고른 종목의 선으로 옮긴다 (select 에서 applyOptions)
+  const rsiLines = {
+    upper: s.rsi.createPriceLine({ price: cfg.upper, color: css("--hot"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false }),
+    lower: s.rsi.createPriceLine({ price: cfg.lower, color: css("--cold"), lineStyle: 2, lineWidth: 1, axisLabelVisible: false }),
+    strong_upper: s.rsi.createPriceLine({ price: cfg.strong_upper, color: css("--hot"), lineStyle: 1, lineWidth: 1, axisLabelVisible: false }),
+    strong_lower: s.rsi.createPriceLine({ price: cfg.strong_lower, color: css("--cold"), lineStyle: 1, lineWidth: 1, axisLabelVisible: false }),
+  };
   rsi.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.06 } });
   s.rsi.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
   price.timeScale().applyOptions({ visible: false });
@@ -503,7 +543,7 @@ function makeCharts() {
     if (!r) return;
     all.forEach(b => b !== a && b.timeScale().setVisibleLogicalRange(r));
   }));
-  return { all, s };
+  return { all, s, rsiLines };
 }
 
 const histPt = p => p.value == null ? p : ({ time: p.time, value: p.value, color: p.value >= 0 ? css("--pos") : css("--neg") });
@@ -533,6 +573,8 @@ async function select(symb) {
   chartSignals = d.signals || [];
   setMarkers();
   if (onlySel()) renderEvents();
+  const ln = linesOf(r);
+  Object.entries(charts.rsiLines).forEach(([k, line]) => line.applyOptions({ price: ln[k] }));
   s.rsi.setData(d.rsi);
   s.macd.setData(d.macd);
   s.signal.setData(d.signal);
