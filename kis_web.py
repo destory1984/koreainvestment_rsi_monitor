@@ -439,6 +439,60 @@ class Hub:
                 ev["after"] = after[(ev["ts"], ev["symb"])]
         return out[::-1][:HISTORY]
 
+    @staticmethod
+    def scores(symb=None):
+        """실제로 울린 알림·시그널의 성적 (알림 기록 전체). 종류별로 15·30·60분 뒤 건수·맞음(보합 뺌)·평균(%).
+        + 는 알림이 말한 쪽으로 간 것 (fill_after 와 같다). 억제된 것, 켤 때 이미 넘어 있던 것은 뺀다."""
+        try:
+            lines = ALERT_LOG.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            lines = []
+        events, after = [], {}
+        for ln in lines:
+            try:
+                ev = json.loads(ln)
+            except ValueError:
+                continue
+            if ev.get("type") == "after":
+                after[(ev["of"], ev["symb"])] = ev["after"]
+            else:
+                events.append(ev)
+        groups = {}
+        for ev in events:
+            if symb and ev["symb"] != symb:
+                continue
+            if ev.get("suppressed") or ev.get("start") or "(시작 때부터)" in ev.get("text", ""):
+                continue
+            a = after.get((ev["ts"], ev["symb"])) or ev.get("after")
+            if not a:
+                continue
+            if ev.get("type") == "signal":
+                kind = f"{'매수' if ev['side'] == 'buy' else '매도'} {'강' if ev['strength'] == 'strong' else '약'}"
+            else:
+                kind = ev["text"]
+            g = groups.setdefault(kind, {h: [] for h in AFTER})
+            for h in AFTER:
+                v = a.get(str(h))
+                if v is not None:
+                    g[h].append(v)
+        out = []
+        for kind, g in groups.items():
+            row = {"kind": kind}
+            for h in AFTER:
+                vs = g[h]
+                moved = [v for v in vs if v != 0]
+                row[str(h)] = {"n": len(vs), "hit": sum(v > 0 for v in moved) / len(moved) if moved else None,
+                               "avg": sum(vs) / len(vs) if vs else None}
+            out.append(row)
+
+        def key(r):   # 알림은 선 숫자 차례(미만 먼저), 그다음 시그널
+            k = r["kind"]
+            if k[0].isdigit():
+                n = float(k.split()[0])
+                return (0, n if "미만" in k else 100 + n)
+            return (1, ["매수 강", "매수 약", "매도 강", "매도 약"].index(k) if k in ("매수 강", "매수 약", "매도 강", "매도 약") else 9)
+        return sorted(out, key=key)
+
     def last_alert(self, symb):
         """그 종목에서 마지막으로 실제로 울린 선 알림 (억제된 것과 시그널은 빼고)."""
         return next((e for e in self.events if e["symb"] == symb and not e["suppressed"]
@@ -762,6 +816,12 @@ def index():
 @app.get("/api/state")
 def api_state():
     return hub.state()
+
+
+@app.get("/api/scores")
+def api_scores(symb: str = ""):
+    """실제로 울린 알림의 성적. symb 를 주면 그 종목만."""
+    return {"symb": symb.upper(), "horizons": list(AFTER), "rows": Hub.scores(symb.upper() or None)}
 
 
 @app.get("/api/chart/{symb}")

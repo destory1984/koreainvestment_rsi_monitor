@@ -143,6 +143,11 @@
   .evhead { display: flex; gap: 10px; align-items: center; padding: 6px 10px 0; color: var(--muted); font-weight: 600; }
   .evhead label { font-weight: 400; display: inline-flex; gap: 3px; align-items: center; cursor: pointer; }
   .evhead input { margin: 0; }
+  #scores { padding: 4px 10px 6px; overflow-x: auto; }
+  #scores table { width: auto; font-variant-numeric: tabular-nums; }
+  #scores th, #scores td { padding: 2px 10px 2px 0; text-align: right; white-space: nowrap; }
+  #scores th:first-child, #scores td:first-child { text-align: left; }
+  #scores .note { color: var(--muted); margin-top: 3px; }
   td.last { color: var(--muted); }
   td.last b { font-weight: 600; }
   .charthead { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 2px; }
@@ -202,7 +207,9 @@
     </div>
   </div>
   <div class="card">
-    <div class="evhead">알림 기록 <label><input type="checkbox" id="evsel"> 고른 종목만</label></div>
+    <div class="evhead">알림 기록 <label><input type="checkbox" id="evsel"> 고른 종목만</label>
+      <button type="button" class="linkbtn" id="scorebtn" title="실제로 울린 알림이 그 뒤 알림 쪽으로 갔는지 종류별로 모아 본다">성적</button></div>
+    <div id="scores" hidden></div>
     <ul id="events"><li class="empty">아직 없다</li></ul>
   </div>
   <div class="card">
@@ -584,7 +591,7 @@ async function select(symb) {
   barTimes = new Set(d.bars.map(b => b.time));
   chartSignals = d.signals || [];
   setMarkers();
-  if (onlySel()) renderEvents();
+  if (onlySel()) { renderEvents(); loadScores(); }
   const ln = linesOf(r);
   Object.entries(charts.rsiLines).forEach(([k, line]) => line.applyOptions({ price: ln[k] }));
   s.rsi.setData(d.rsi);
@@ -675,6 +682,33 @@ function eventItem(ev) {
 
 const onlySel = () => $("#evsel").checked;
 
+// 성적: 실제로 울린 알림을 종류별로 15·30·60분 뒤 모아 본다 (서버가 알림 기록 전체로 셈한다)
+async function loadScores() {
+  const box = $("#scores");
+  if (box.hidden) return;
+  const symb = onlySel() && selected ? selected : "";
+  const res = await fetch("/api/scores?symb=" + encodeURIComponent(symb)).catch(() => null);
+  if (!res || !res.ok) { box.textContent = "성적을 못 불러왔다"; return; }
+  const d = await res.json();
+  if (!d.rows.length) { box.innerHTML = `<div class="note">${symb ? esc(symb) + " 은 " : ""}아직 결과가 난 알림이 없다</div>`; return; }
+  const pct = v => v == null ? '<span class="dim">-</span>' : `${Math.round(v * 100)}%`;
+  const avg = v => v == null ? '<span class="dim">-</span>'
+                             : `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : "dim"}">${sgn(v, 2)}%</span>`;
+  const hs = d.horizons;
+  box.innerHTML = `<table><thead><tr><th>${symb ? esc(symb) : "전체"}</th>` +
+    hs.map(h => `<th>${h}분 건수</th><th>맞음</th><th>평균</th>`).join("") + "</tr></thead><tbody>" +
+    d.rows.map(r => `<tr><td>${esc(r.kind)}</td>` +
+      hs.map(h => { const x = r[h]; return `<td>${x.n}</td><td>${pct(x.hit)}</td><td>${avg(x.avg)}</td>`; }).join("") +
+      "</tr>").join("") + "</tbody></table>" +
+    '<div class="note">알림 때 가격에서 그만큼 뒤 5분봉 종가까지. 알림이 말한 쪽(미만·매수는 오름, 초과·매도는 내림)으로 가면 +. ' +
+    '맞음은 보합을 뺀 비율. 억제된 것과 켤 때 이미 넘어 있던 것은 뺐다.</div>';
+}
+$("#scorebtn").onclick = () => {
+  $("#scores").hidden = !$("#scores").hidden;
+  $("#scorebtn").textContent = $("#scores").hidden ? "성적" : "성적 닫기";
+  loadScores();
+};
+
 function renderEvents() {
   const ul = $("#events");
   ul.innerHTML = "";
@@ -697,6 +731,7 @@ function addEvent(ev) {
 $("#evsel").onchange = () => {
   try { localStorage.setItem("evsel", onlySel() ? "1" : ""); } catch (e) {}
   renderEvents();
+  loadScores();
 };
 try { $("#evsel").checked = !!localStorage.getItem("evsel"); } catch (e) {}
 

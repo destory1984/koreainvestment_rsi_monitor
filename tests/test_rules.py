@@ -369,6 +369,26 @@ class AfterTest(unittest.TestCase):
         self.assertEqual(h.fill_after(), [])
         self.assertNotIn("after", h.events[0])
 
+    def test_scores(self):
+        rows = [self.ev(), self.ev(ts=2.0), self.ev(ts=3.0, suppressed="쿨다운"), self.ev(ts=4.0, start=True),
+                self.ev(ts=5.0, type="signal", side="sell", strength="warn", text="매도 시그널 (약, 역추세)"),
+                self.ev(ts=6.0, symb="B"),
+                {"type": "after", "of": 1.0, "symb": "A", "after": {"15": 1.0, "30": 0.0, "60": None}},
+                {"type": "after", "of": 2.0, "symb": "A", "after": {"15": -0.5, "30": 0.0, "60": 2.0}},
+                {"type": "after", "of": 3.0, "symb": "A", "after": {"15": 9, "30": 9, "60": 9}},
+                {"type": "after", "of": 4.0, "symb": "A", "after": {"15": 9, "30": 9, "60": 9}},
+                {"type": "after", "of": 5.0, "symb": "A", "after": {"15": 0.3, "30": 0.3, "60": 0.3}},
+                {"type": "after", "of": 6.0, "symb": "B", "after": {"15": 1, "30": 1, "60": 1}}]
+        self.log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        got = {r["kind"]: r for r in w.Hub.scores("A")}
+        self.assertEqual(list(got), ["35 미만", "매도 약"])              # 억제·켤 때 것은 뺀다, B 는 안 셈
+        a = got["35 미만"]
+        self.assertEqual((a["15"]["n"], a["15"]["hit"], a["15"]["avg"]), (2, 0.5, 0.25))
+        self.assertEqual((a["30"]["n"], a["30"]["hit"]), (2, None))      # 보합뿐이면 맞음 없음
+        self.assertEqual(a["60"]["n"], 1)                                 # 장 닫힘(None)은 안 셈
+        self.assertEqual(len(w.Hub.scores()), 2)
+        self.assertEqual(w.Hub.scores()[0]["15"]["n"], 3)                 # 전체면 B 도
+
     def test_read_log_attaches_after(self):
         rows = [self.ev(), self.ev(ts=2.0),
                 {"type": "after", "of": 1.0, "symb": "A", "after": {"15": 1, "30": 2, "60": 3}}]
