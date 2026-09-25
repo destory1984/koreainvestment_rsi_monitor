@@ -26,6 +26,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 import kis_alert as al
+import kis_replay as rp
 import kis_telegram as tg
 import kis_rsi as k
 import kis_signal as ks
@@ -123,11 +124,39 @@ class Hub:
         최근 오버나이트 5분 칸 절반 넘게 체결이 있었는지로 가른다. 틀리면 화면에서 바꾸고 설정에 남긴다."""
         bars = k.fetch_bars(self.appkey, self.secret, excd, symb, self.nmin)
         if excd not in k.DAY_EXCD:
+            self.store([(excd, symb, bars[:-1], True)])
             return bars, None
         day, have, of = k.fetch_night(self.appkey, self.secret, excd, symb, self.nmin)
         auto = have > of * k.NIGHT_SHARE
         on = self.settings.get("night", {}).get(symb, auto)
+        # 받은 것은 되감기 DB 에도 쌓는다 (마지막 봉은 아직 진행 중이라 뺀다). 주간거래 봉은 정규 쪽 봉을 덮지 않는다
+        self.store([(excd, symb, bars[:-1], True), (excd, symb, day[:-1], False)], night=(excd, symb, on))
         return (k.merge_bars(bars, day) if on else bars), {"on": on, "auto": auto, "have": have, "of": of}
+
+    def store(self, items, night=None):
+        """분봉을 되감기 DB(replay_cache/bars.db)에 쌓는다 (블로킹). items 는 [(excd, symb, 봉들, 덮어쓸지)].
+        서버가 켜져 있는 동안 봉이 쌓이니, 한국투자증권이 지금 세션 것만 주는 주간거래 봉도 모인다.
+        DB 에 못 써도 서버는 그대로 돈다."""
+        try:
+            con = rp.db()
+            try:
+                for excd, symb, bars, replace in items:
+                    rp.put_bars(con, excd, symb, self.nmin, bars, replace=replace)
+                if night:
+                    rp.set_night(con, *night[:2], self.nmin, night[2])
+                con.commit()
+            finally:
+                con.close()
+        except Exception as e:
+            print(f"분봉 DB 에 못 씀 — {e}", flush=True)
+
+    def store_closed(self, symbs):
+        """방금 닫힌 봉을 DB 에 넣는다. 실시간으로 만든 봉이라 한국투자증권이 준 봉이 이미 있으면 두고 없을 때만.
+        알림을 늦추지 않게 봉만 베껴 두고 쓰기는 다른 스레드가 한다 (DB 가 잠겨 있으면 30초까지 기다리니)."""
+        items = [(b.excd, b.symb, [dict(b.bars[-2])], False)
+                 for b in (self.books.get(s) for s in symbs) if b and len(b.bars) >= 2]
+        if items:
+            threading.Thread(target=self.store, args=(items,), daemon=True).start()
 
     def _tf_books(self, book):
         """주 분봉 말고 MTF 의 다른 시간봉들을 받는다 (블로킹). 오버나이트 봉은 주 분봉과 같은 결정을 따른다."""
@@ -633,6 +662,7 @@ class Hub:
             self.check_signals(closed)
             if closed:
                 await self.push_after(self.fill_after(closed))
+                self.store_closed(closed)
             if self.clients:
                 rows = [self.row(self.books[s]) for s in dirty if s in self.books]
                 await self.broadcast({"type": "rows", "rows": rows})

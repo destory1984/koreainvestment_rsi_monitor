@@ -4,6 +4,7 @@
 """
 import asyncio
 import json
+import sqlite3
 import sys
 import tempfile
 import time
@@ -268,6 +269,40 @@ class AfterTest(unittest.TestCase):
         self.assertEqual([e["ts"] for e in got], [2.0, 1.0])  # 최근 것이 앞, after 줄은 알림이 아님
         self.assertEqual(got[1]["after"]["60"], 3)
         self.assertNotIn("after", got[0])
+
+
+# ── 서버가 분봉을 DB 에 쌓기 ───────────────────────────────────
+class StoreTest(unittest.TestCase):
+    def setUp(self):
+        cache = Path(tempfile.mkdtemp())
+        for name, val in (("CACHE", cache), ("DB", cache / "bars.db")):
+            patcher = mock.patch.object(rp, name, val)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.h = w.Hub.__new__(w.Hub)
+        self.h.nmin = 5
+
+    def test_api_bars_replace_live_bars_do_not(self):
+        api = bars_from([100, 101, 102])
+        self.h.store([("NAS", "TSLA", api, True)], night=("NAS", "TSLA", True))
+        live = dict(api[1], close=555)                                         # 실시간으로 만든, 조금 다른 봉
+        newer = dict(api[2], time_us="20260924 101500", close=103)
+        self.h.books = {"TSLA": types.SimpleNamespace(excd="NAS", symb="TSLA", bars=[live, newer, dict(newer)])}
+        with mock.patch.object(w.threading, "Thread",
+                               lambda target, args, daemon: types.SimpleNamespace(start=lambda: target(*args))):
+            self.h.store_closed({"TSLA"})
+            self.h.books["TSLA"].bars = [live, newer]                         # 닫힌 봉(live)이 DB 에 이미 있다
+            self.h.store_closed({"TSLA"})
+        con = rp.db()
+        got = rp.get_bars(con, "NAS", "TSLA", 5)
+        self.assertEqual([b["close"] for b in got], [100, 101, 102, 103])     # 101 은 API 값 그대로
+        self.assertTrue(rp.get_night(con, "NAS", "TSLA", 5))
+
+    def test_store_failure_does_not_raise(self):
+        with mock.patch.object(rp, "db", side_effect=sqlite3.OperationalError("database is locked")), \
+                mock.patch("builtins.print") as out:
+            self.h.store([("NAS", "TSLA", bars_from([1]), True)])
+        self.assertIn("못 씀", out.call_args[0][0])
 
 
 # ── 휴장일·세션 ────────────────────────────────────────────────
