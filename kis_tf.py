@@ -52,6 +52,8 @@ WARMUP_DAYS = 5
 # 종목별 선을 정할 때 견줄 선들 (이름 → [아래, 위], 강한 선은 5 바깥). 봉 길이는 서버와 같은 5분.
 LINE_SETS = {"35/65": [35, 65], "30/70": [30, 70], "25/75": [25, 75]}
 LINE_TF = 5
+# 변동폭: 알림 때 그 앞에 닫힌 5분봉 14개의 평균 진폭(고가-저가)을 가격 대비 %로. 봉 사이 틈(밤·장 사이)은 넣지 않으려고 참범위가 아닌 진폭을 쓴다
+ATR_TF, ATR_N = 5, 14
 
 
 def load_minutes(con, appkey, secret, excd, symb, offline):
@@ -128,6 +130,27 @@ def walk_signals(groups, period, lines):
             for x in ks.signals(bars[:-1], period, lines=lines)]
 
 
+def atr_pct(minutes, tf=ATR_TF, n=ATR_N):
+    """1분봉마다 그 앞에 닫힌 tf 분봉 n 개의 평균 진폭 ÷ 직전 종가 × 100. 봉이 모자라면 None."""
+    out, ranges, last_close = [None] * len(minutes), [], None
+    for bar, idx in aggregate(minutes, tf):
+        if len(ranges) >= n:
+            v = sum(ranges[-n:]) / n / last_close * 100
+            for i in idx:
+                out[i] = v
+        ranges.append(bar["high"] - bar["low"])
+        last_close = bar["close"]
+    return out
+
+
+def scored(symb, minutes, events, kr, atr):
+    """rp.score 에 알림 때 변동폭(atr, %)을 붙인다."""
+    rows = rp.score(symb, minutes, events, HORIZONS, kr)
+    for r, e in zip(rows, events):
+        r["atr"] = atr[e["i"]]
+    return rows
+
+
 def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None):
     """봉 길이마다 채점 줄들, 기준, (채점 첫날, 끝날, 날 수), 그리고 line_sets 의 선마다 LINE_TF 분봉 알림 채점 줄들."""
     days = sorted({m["time_us"][:8] for m in minutes})
@@ -135,18 +158,18 @@ def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None):
         return {}, {}, None, {}
     start_day = days[WARMUP_DAYS]
     start = next(i for i, m in enumerate(minutes) if m["time_us"][:8] >= start_day)
-    rows = {}
+    rows, atr = {}, atr_pct(minutes)
     for tf in tfs:
         groups = aggregate(minutes, tf)
         events = walk_alerts(minutes, groups, period, lines) + walk_signals(groups, period, lines)
         events = [e for e in events if e["i"] >= start]
-        rows[tf] = rp.score(symb, minutes, events, HORIZONS, kr)
+        rows[tf] = scored(symb, minutes, events, kr, atr)
     by_lines = {}
     if line_sets:
         groups = aggregate(minutes, LINE_TF)
         for name, ln in line_sets.items():
             events = [e for e in walk_alerts(minutes, groups, period, al.Lines.parse(ln)) if e["i"] >= start]
-            by_lines[name] = rp.score(symb, minutes, events, HORIZONS, kr)
+            by_lines[name] = scored(symb, minutes, events, kr, atr)
     # 기준: 채점 구간의 아무 분에서나 (WARMUP 봉은 이미 앞에서 지났으니 0 부터)
     base = baseline(minutes[start:], kr)
     return rows, base, (start_day, days[-1], len(days) - WARMUP_DAYS), by_lines

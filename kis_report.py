@@ -179,6 +179,107 @@ def live_table():
     return f"<table><thead><tr>{top}</tr><tr>{sub}</tr></thead><tbody>{''.join(trs)}</tbody></table>"
 
 
+COST = 0.2      # 사고팔 때 드는 비용 가정 (%, 왕복: 수수료·세금·호가 차이). --cost 로 바꾼다
+MIN_PICK = 8    # 앞 절반에서 이보다 적게 울린 것은 고르지 않는다 (지금 것을 둔다)
+
+
+def day_of(r):
+    return r["time"].strftime("%Y%m%d")
+
+
+def split_day(all_rows):
+    """채점한 날들의 가운데 날. 이 날부터가 뒤 절반."""
+    days = sorted({day_of(r) for rs in all_rows.values() for r in rs})
+    return days[len(days) // 2] if days else None
+
+
+def excess(rows, bases, h=60):
+    return tf.stats(rows, bases, h)["excess"] if rows else None
+
+
+def split_tf_table(all_rows, bases, mid, h=60):
+    """봉 길이마다 앞·뒤 절반. ★ = 앞에서 초과가 가장 컸던 것."""
+    pick = lambda r: is_alert(r) and main_session(r)
+    body, front = [], {}
+    for t, rows in all_rows.items():
+        rs = [r for r in rows if pick(r)]
+        a = [r for r in rs if day_of(r) < mid]
+        b = [r for r in rs if day_of(r) >= mid]
+        front[t] = excess(a, bases, h)
+        body.append((t, len(a), len(b), cell(a, bases, h), cell(b, bases, h)))
+    top = max((t for t in front if front[t] is not None), key=lambda t: front[t], default=None)
+    trs = "".join(f"<tr{' class=best' if t == top else ''}><th>{t}분{' ★' if t == top else ''}</th>"
+                  f"<td class='num'>{na}</td>{ca}<td class='num'>{nb}</td>{cb}</tr>" for t, na, nb, ca, cb in body)
+    return ("<table><thead><tr><th rowspan='2'>봉</th><th colspan='3'>앞 절반</th><th colspan='3'>뒤 절반</th></tr>"
+            "<tr><th class='num'>건수</th><th class='num'>맞음</th><th class='num'>초과%</th>"
+            "<th class='num'>건수</th><th class='num'>맞음</th><th class='num'>초과%</th></tr></thead>"
+            f"<tbody>{trs}</tbody></table>")
+
+
+def pick_per_ticker(choices, default, bases, mid, h=60):
+    """종목마다 앞 절반에서 초과가 가장 큰 것을 고른다. (고른 것, 앞 초과, 뒤 줄들, 지금 것 뒤 줄들)."""
+    front = {}
+    for name, rows in choices.items():
+        a = [r for r in rows if is_alert(r) and main_session(r) and day_of(r) < mid]
+        if len(a) >= MIN_PICK:
+            front[name] = excess(a, bases, h)
+    ok = {n: v for n, v in front.items() if v is not None}
+    chosen = max(ok, key=ok.get) if ok else default
+    back = lambda n: [r for r in choices.get(n, []) if is_alert(r) and main_session(r) and day_of(r) >= mid]
+    return chosen, front.get(chosen), back(chosen), back(default)
+
+
+def split_pick_table(label, per_symb_choices, default, bases, mid, h=60):
+    """종목마다 앞에서 고른 것 vs 모두 지금 것, 뒤 절반에서. 아래에 종목마다 무엇을 골랐는지."""
+    picked, kept, lines = [], [], []
+    for symb, choices in per_symb_choices.items():
+        chosen, fex, b_chosen, b_default = pick_per_ticker(choices, default, bases, mid, h)
+        picked += b_chosen
+        kept += b_default
+        bx, dx = excess(b_chosen, bases, h), excess(b_default, bases, h)
+        name = html.escape(tf.k.KR_INFO.get(symb, {}).get("name", symb))
+        fmt = lambda v: "-" if v is None else f"{v:+.2f}"
+        better = "" if bx is None or dx is None else (" pos" if bx > dx else " neg" if bx < dx else "")
+        lines.append(f"<tr><th>{name}</th><td>{html.escape(str(chosen))}{'' if chosen != default else ' (지금)'}</td>"
+                     f"<td class='num'>{fmt(fex)}</td><td class='num{better}'>{fmt(bx)}</td><td class='num'>{fmt(dx)}</td></tr>")
+    top = ("<table><thead><tr><th>뒤 절반에서</th><th class='num'>건수</th>"
+           + "".join(f"<th colspan='2'>{x}분 뒤</th>" for x in H) + "</tr></thead><tbody>"
+           + f"<tr><th>종목마다 앞에서 고른 {label}</th><td class='num'>{len(picked)}</td>"
+           + "".join(cell(picked, bases, x) for x in H) + "</tr>"
+           + f"<tr><th>모두 지금 {label} ({html.escape(str(default))})</th><td class='num'>{len(kept)}</td>"
+           + "".join(cell(kept, bases, x) for x in H) + "</tr></tbody></table>")
+    detail = (f"<table><thead><tr><th>종목</th><th>고른 {label}</th><th class='num'>앞 초과%</th>"
+              f"<th class='num'>뒤 초과%</th><th class='num'>지금 것 뒤</th></tr></thead><tbody>{''.join(lines)}</tbody></table>")
+    return top + "<p></p>" + detail
+
+
+def atr_table(rows, bases, cost, parts=5):
+    """변동폭(5분봉 평균 진폭 %)을 다섯 칸으로 나눠, 칸마다 맞음·평균·비용 뺀 평균."""
+    rs = sorted((r for r in rows if is_alert(r) and main_session(r) and r.get("atr")), key=lambda r: r["atr"])
+    if len(rs) < parts * 10:
+        return "<p class='dim'>알림이 모자라다.</p>"
+    size = len(rs) / parts
+    groups = [rs[round(i * size):round((i + 1) * size)] for i in range(parts)]
+    trs = []
+    for g in groups:
+        tds = ""
+        for x in H:
+            s = tf.stats(g, bases, x)
+            got = [r[x] for r in g if r[x] is not None]
+            avg = sum(got) / len(got) if got else None
+            net = None if avg is None else avg - cost
+            hit = "-" if s["hit"] is None else f"{s['hit'] * 100:.0f}%"
+            tds += (f"<td class='num {'pos' if (s['hit'] or 0) > .5 else 'neg'}'>{hit}</td>"
+                    f"<td class='num'>{'-' if avg is None else f'{avg:+.2f}'}</td>"
+                    f"<td class='num {'pos' if (net or 0) > 0 else 'neg'}'>{'-' if net is None else f'{net:+.2f}'}</td>")
+        trs.append(f"<tr><th>{g[0]['atr']:.2f}~{g[-1]['atr']:.2f}%</th><td class='num'>{len(g)}</td>{tds}</tr>")
+    head = ("<thead><tr><th rowspan='2'>변동폭</th><th rowspan='2' class='num'>건수</th>"
+            + "".join(f"<th colspan='3'>{x}분 뒤</th>" for x in H) + "</tr><tr>"
+            + "".join("<th class='num'>맞음</th><th class='num'>평균%</th><th class='num'>비용 뺀%</th>" for _ in H)
+            + "</tr></thead>")
+    return f"<table>{head}<tbody>{''.join(trs)}</tbody></table>"
+
+
 # ── 페이지 ────────────────────────────────────────────────────
 CSS = """
 :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6eb; --text:#1b1f24; --muted:#6b7380;
@@ -203,7 +304,7 @@ table.in td { border:0; padding:0 4px; } td.wrap { padding:2px 4px; }
 """
 
 
-def build(offline=True, say=print):
+def build(offline=True, say=print, cost=COST):
     tf.k.load_kr_market()
     tickers = rp.collect_tickers()
     all_rows, bases, per_symb, ndays, info = tf.analyze(tickers, tf.TFS, offline=offline, say=say,
@@ -215,6 +316,7 @@ def build(offline=True, say=print):
     span = f"{min(days)[:4]}-{min(days)[4:6]}-{min(days)[6:]} ~ {max(days)[:4]}-{max(days)[4:6]}-{max(days)[6:]}"
     us = lambda r: not r["symb"].isdigit()
     five = all_rows.get(5, [])
+    mid = split_day(all_rows)
     kinds = sorted({r["kind"] for r in five if is_alert(r)},
                    key=lambda kd: (0 if "미만" in kd else 1, float(kd.split()[1])))
     sections = [
@@ -237,6 +339,17 @@ def build(offline=True, say=print):
         f"""<section><h2>종목 × 봉 길이 — 알림, 정규장, 60분 뒤</h2>
 <p class="dim">칸마다 맞음%·초과%. 파란 바탕 = 그 종목에서 초과가 가장 큰 봉 길이. 건수가 적은 종목은 흔들림이 크다 (칸에 마우스를 올리면 건수).</p>
 {grid(per_symb, bases, info, list(all_rows))}</section>""",
+        f"""<section><h2>나눠서 확인 — 앞 절반에서 고른 것이 뒤 절반에서도 좋은가 (알림, 정규장)</h2>
+<p class="dim">앞 절반 = {mid[:4]}-{mid[4:6]}-{mid[6:]} 전, 뒤 절반 = 그날부터. 앞에서 가장 좋았던 것이 뒤에서도 좋아야 믿을 만하다.
+뒤에서 무너지면 앞의 좋은 성적은 우연(과최적화)이었다. 종목마다 고를 때 앞에서 {MIN_PICK}번 넘게 울린 것만 고르고, 아니면 지금 것을 둔다.</p>
+<div class="cols"><div><h2>봉 길이 (모두 합쳐, 60분 뒤)</h2>{split_tf_table(all_rows, bases, mid)}</div>
+<div><h2>종목마다 선 고르기 (5분봉)</h2>{split_pick_table("선", {s: i["lines"] for s, i in info.items()}, "35/65", bases, mid)}</div>
+<div><h2>종목마다 봉 길이 고르기</h2>{split_pick_table("봉", {s: {f"{t}분": rs for t, rs in per.items()} for s, per in per_symb.items()}, "5분", bases, mid)}</div></div></section>""",
+        f"""<section><h2>변동폭별 — 5분봉 알림, 정규장</h2>
+<p class="dim">변동폭 = 알림 때 그 앞 5분봉 14개의 평균 진폭(고가−저가) ÷ 가격. 알림을 변동폭 순으로 다섯 칸에 나눴다.
+<b>비용 뺀%</b> = 평균 수익 − {cost:.2f}% (사고팔 때 수수료·세금·호가 차이를 합쳐 이만큼 든다고 가정, <code>--cost</code> 로 바꾼다).
+비용을 빼고도 + 인 칸만 있으면 「변동폭이 그 위일 때만 울리기」를 생각할 만하다.</p>
+{atr_table(five, bases, cost)}</section>""",
         f"""<section><h2>종목별 선 — 5분봉 알림, 정규장, 60분 뒤</h2>
 <p class="dim">선을 아래/위 둘로 적었다 (강한 선은 5 바깥, 35/65 면 30·35·65·70). ● = 지금 그 종목에 쓰는 선. 파란 바탕 = 초과가 가장 큰 선.
 바깥 선일수록 덜 울리니 「하루」도 같이 본다.</p>
@@ -264,8 +377,9 @@ def main():
     ap = argparse.ArgumentParser(description="채점 보고서 페이지 (replay_cache/report.html)")
     ap.add_argument("--fetch", action="store_true", help="1분봉을 이어 받은 뒤 만들기")
     ap.add_argument("--open", action="store_true", help="다 만들면 브라우저로 열기")
+    ap.add_argument("--cost", type=float, default=COST, help=f"사고팔 때 드는 비용 가정, %% 왕복 (기본 {COST})")
     args = ap.parse_args()
-    out = build(offline=not args.fetch)
+    out = build(offline=not args.fetch, cost=args.cost)
     print(f"\n{out} 에 썼다. 웹 서버가 켜져 있으면 http://localhost:8000/report")
     if args.open:
         webbrowser.open(out.resolve().as_uri())
