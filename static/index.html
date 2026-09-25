@@ -93,6 +93,7 @@
   @media (hover: none) { td.del button, td.grip span { visibility: visible; } }
   .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
+  .nslot { display: inline-block; width: calc(var(--fs) * 3.4); text-align: left; }
   .ntag { cursor: pointer; margin: 0 0 0 4px; }
   .ntag.manual { border-color: var(--down); color: var(--down); }
   .linkbtn { font: inherit; border: 0; background: none; color: var(--down); cursor: pointer; padding: 0 2px;
@@ -256,11 +257,12 @@ function nightText(r) {
   return (n.on ? "RSI·차트에 오버나이트 봉을 넣는다" : "RSI·차트에서 오버나이트 봉을 뺐다 (애프터장까지)") + ` — ${how}.`;
 }
 
+// 표시가 없는 줄(국내 등)도 같은 폭을 비워 둬서 RSI 막대가 줄마다 같은 자리에 오게 한다
 function nightTag(r) {
-  if (!r.night || !r.night.have) return "";   // 오버나이트 체결이 없으면 따질 게 없다
+  if (!r.night || !r.night.have) return '<span class="nslot"></span>';   // 오버나이트 체결이 없으면 따질 게 없다
   const manual = r.night.on !== r.night.auto;
-  return `<span class="tag ntag${manual ? " manual" : ""}" data-symb="${esc(r.symb)}" title="${esc(nightText(r))} 누르면 바꾼다">` +
-         `${r.night.on ? "24h" : "정규"}</span>`;
+  return `<span class="nslot"><span class="tag ntag${manual ? " manual" : ""}" data-symb="${esc(r.symb)}" ` +
+         `title="${esc(nightText(r))} 누르면 바꾼다">${r.night.on ? "24h" : "정규"}</span></span>`;
 }
 
 // 표시를 누르면 까닭을 알림 줄에 보이고, 거기서 바꿀 수 있다 (휴대폰은 마우스를 올려 볼 수 없으니)
