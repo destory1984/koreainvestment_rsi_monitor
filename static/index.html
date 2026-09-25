@@ -55,6 +55,9 @@
   .menu label:hover { background: var(--sel); }
   .menu input { margin: 0; }
   .menu .mrow { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 3px 8px; }
+  .menu .mlabel { display: grid; gap: 1px; }
+  .menu .mlabel small { color: var(--muted); font-size: calc(var(--fs) * .85); max-width: calc(var(--fs) * 22); }
+  .switch:disabled { opacity: .4; cursor: default; }
   .switch { position: relative; flex: none; width: calc(var(--fs) * 3.2); height: calc(var(--fs) * 1.8); padding: 0;
             border: 0; border-radius: 99px; background: var(--line); cursor: pointer; transition: background .15s; }
   .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(var(--fs) * 1.8 - 4px);
@@ -139,8 +142,10 @@
 </header>
 <div class="menu" id="setmenu" hidden>
   <div class="mrow"><span>지표</span><span class="sub" id="sub"></span></div>
-  <div class="mrow"><span>알림 소리</span><button class="switch" id="sound" role="switch" aria-checked="true" aria-label="알림 소리" title="RSI 알림을 말로 알릴지"></button></div>
-  <div class="mrow"><span>시그널 소리</span><button class="switch" id="sigsound" role="switch" aria-checked="true" aria-label="시그널 소리" title="매수·매도 시그널도 말로 알릴지"></button></div>
+  <div class="mrow"><span class="mlabel">RSI 선 알림<small>65·70 을 넘거나 35·30 밑으로 가는 순간. 끄면 소리가 모두 꺼진다</small></span>
+    <button class="switch" id="sound" role="switch" aria-checked="true" aria-label="RSI 선 알림 소리"></button></div>
+  <div class="mrow"><span class="mlabel">매수·매도 시그널<small>RSI 가 선을 넘은 뒤 MACD 가 돌아설 때. 봉이 닫힐 때만</small></span>
+    <button class="switch" id="sigsound" role="switch" aria-checked="true" aria-label="매수·매도 시그널 소리"></button></div>
   <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
 </div>
 <div id="markets"></div>
@@ -570,6 +575,7 @@ function renderMarkets(list) {
 function setSound(on) {
   cfg.sound = on;
   $("#sound").setAttribute("aria-checked", on);
+  $("#sigsound").disabled = !on;   // 선 알림을 끄면 시그널도 소리가 안 난다
   // 설정 안에 숨어 있어도 소리가 꺼진 줄은 알 수 있게
   $("#setbtn").textContent = on ? "⚙ 설정" : "⚙ 설정 🔇";
   $("#setbtn").title = on ? "소리 설정" : "소리 설정 — 알림 소리가 꺼져 있다";
