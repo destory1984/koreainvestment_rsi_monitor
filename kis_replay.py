@@ -49,6 +49,16 @@ webull_rsi_monitor 의 rsi_replay.py 와 같은 생각이다.
   python kis_replay.py --list            하나씩 다 보기
   python kis_replay.py --csv scored.csv  엑셀로 볼 것
   python kis_replay.py --offline         새로 받지 않고 쌓아 둔 것만
+  python kis_replay.py --collect         주간거래 분봉만 받아 쌓기 (30분마다 돌리는 용도)
+
+────────────────────────────────────────────────────────────
+--collect
+
+한국투자증권은 주간거래 분봉을 지금 세션 것만 준다. 세션이 끝나면 못 받으니 세션 동안 틈틈이
+받아 둬야 한다. PC 가 언제 켜져 있을지 모르니 30분마다 돌리고, 스스로 가린다:
+  - 주간거래 중이거나 끝난 지 1시간 안이 아니면 바로 끝낸다
+  - 종목마다 쌓아 둔 주간거래 봉이 30분 안의 것이면 건너뛴다
+받은 봉은 replay_cache/ 에 합치고, 한 줄씩 replay_cache/collect.log 에 남긴다.
 """
 import argparse
 import csv
@@ -116,6 +126,45 @@ def night_on(appkey, secret, excd, symb, nmin):
     except Exception:
         override = {}
     return override.get(symb, have > of * k.NIGHT_SHARE), day
+
+
+def collect(tickers, nmin, fresh_min=30, grace_min=60):
+    """주간거래 분봉만 받아 쌓는다. 받을 때가 아니거나 이미 최신이면 건너뛴다."""
+    now = datetime.now(k.NEW_YORK)
+    in_session = k.us_day_session(now) or k.us_day_session(now - timedelta(minutes=grace_min))
+    log = []
+    if not in_session:
+        log.append("주간거래 시간이 아님")
+    else:
+        appkey, secret = k.load_keys()
+        cutoff = (now - timedelta(minutes=fresh_min)).strftime("%Y%m%d %H%M%S")
+        for t in tickers:
+            excd, symb = k.resolve(appkey, secret, t)
+            if excd not in k.DAY_EXCD:
+                continue
+            path = CACHE / f"{excd}_{symb}_{nmin}.json"
+            cached = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"bars": {}, "night": False}
+            night = [x for x in cached["bars"] if session(ts(x)) == "주간"]
+            if night and max(night) >= cutoff:
+                log.append(f"{symb} 최신")
+                continue
+            try:
+                on, day = night_on(appkey, secret, excd, symb, nmin)
+            except Exception as e:
+                log.append(f"{symb} 실패 {e}")
+                continue
+            new = [b for b in day if b["time_us"] not in cached["bars"]]
+            cached["bars"].update({b["time_us"]: b for b in day})
+            cached["night"] = on
+            CACHE.mkdir(exist_ok=True)
+            path.write_text(json.dumps(cached), encoding="utf-8")
+            log.append(f"{symb} +{len(new)}")
+            time.sleep(0.12)
+    line = f"{datetime.now():%Y-%m-%d %H:%M} (미국 {now:%m-%d %H:%M}) " + ", ".join(log)
+    CACHE.mkdir(exist_ok=True)
+    with open(CACHE / "collect.log", "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    print(line)
 
 
 def load_bars(appkey, secret, excd, symb, nmin, days, offline):
@@ -263,9 +312,12 @@ def main():
     ap.add_argument("--list", action="store_true", help="하나씩 다 보기")
     ap.add_argument("--csv", help="채점 결과를 이 파일에 적기")
     ap.add_argument("--offline", action="store_true", help="새로 받지 않고 replay_cache 만 쓰기")
+    ap.add_argument("--collect", action="store_true", help="주간거래 분봉만 받아 쌓고 끝내기")
     args = ap.parse_args()
 
     tickers = args.tickers or json.loads(WATCHLIST.read_text(encoding="utf-8"))
+    if args.collect:
+        return collect(tickers, args.min)
     appkey = secret = None
     if not args.offline:
         appkey, secret = k.load_keys()

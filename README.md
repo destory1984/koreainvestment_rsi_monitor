@@ -227,8 +227,33 @@ python kis_replay.py --csv scored.csv
 그 뒤 15·30·60분에 가격이 RSI 가 말한 쪽(미만·매수는 오름, 초과·매도는 내림)으로 갔는지 센다.
 「기준」은 아무 봉에서나 같은 쪽으로 들어갔을 때의 평균이고, 「초과」가 그것을 뺀 값이다. 0 근처면 값어치가 없다.
 
-받은 분봉은 `replay_cache/` 에 쌓인다. 한국투자증권은 주간거래 분봉을 지금 세션 것만 주니,
-오버나이트 알림은 되감을 때마다 조금씩 쌓인다. 국내 종목은 아직 되감지 않는다.
+받은 분봉은 `replay_cache/` 에 쌓인다. 국내 종목은 아직 되감지 않는다.
+
+**주간거래 분봉 모으기** — 한국투자증권은 정규·프리·애프터 분봉은 한 달쯤 거슬러 주지만,
+주간거래(한국 낮) 분봉은 **지금 세션 것만** 준다. 세션이 끝나면 못 받으니 세션 동안 받아 둬야
+오버나이트 알림도 채점할 수 있다.
+
+```bash
+python kis_replay.py --collect        # 주간거래 분봉만 받아 replay_cache/ 에 쌓고 끝난다 (몇 초)
+```
+
+주간거래 시간(미국 동부 20:00~04:00)이 아니면 바로 끝나고, 종목마다 쌓아 둔 봉이 30분 안의 것이면 건너뛴다.
+한 번 돌 때마다 `replay_cache/collect.log` 에 한 줄 남긴다.
+
+PC 가 언제 켜져 있을지 모르니 윈도우 작업 스케줄러로 **평일 09:00~18:30, 30분마다** 돌린다.
+주간거래는 한국 시각으로 서머타임 동안 09:00~17:00, 11월 초 서머타임이 끝나면 10:00~18:00 이라
+둘 다 덮게 잡았다. 창이 뜨지 않게 `collect_day.vbs` 가 Git Bash 로 돌린다
+(키가 `~/.bashrc` 에 있어서다. Git 을 다른 곳에 깔았으면 그 파일의 `BASH` 를 고친다). 등록은 PowerShell 에서:
+
+```powershell
+$t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 09:00
+$t.Repetition = (New-ScheduledTaskTrigger -Once -At 09:00 -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Hours 9 -Minutes 30)).Repetition
+$a = New-ScheduledTaskAction -Execute "wscript.exe" -Argument '//B "C:\_c\koreainvest\collect_day.vbs"'
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "KIS 주간거래 분봉 수집" -Trigger $t -Action $a -Settings $s
+```
+
+경로(`C:\_c\koreainvest`)는 자기 폴더로 바꾼다. 지우려면 `Unregister-ScheduledTask -TaskName "KIS 주간거래 분봉 수집"`.
 
 ### 어떻게 계산하나
 
