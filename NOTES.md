@@ -55,7 +55,7 @@
 - **캐시 열쇠에는 목소리를 바꾸는 설정을 모두 넣는다**(화자·시드·감정·자르기 / Edge 목소리·빠르기·음높이·크기).
 - **시작 인사**: 기본은 「모니터링을 시작합니다」. 사용자 PC 는 `kis_settings.json` 의 greeting 으로 따로 둔다(저장소에 안 올라감).
 - **화면**: 글자 기본 10px, 한국식 색(상승 빨강·하락 파랑), 깜박임 없음, 종목 칸은 'SK하이닉스' 폭(74px).
-  제목은 「<작게>한량이 만든</작게> 한국투자증권 RSI Monitor ver 0.1」.
+  제목은 「<작게>한량이 만든</작게> 한국투자증권 RSI Monitor ver 0.2」.
 - **문서는 쉬운 평서체**(~다), 숫자를 넣는다. README 첫머리에 "한국투자증권과 관계없는 개인 프로젝트" 문구.
 - **커밋 주소는 가림 주소만**: `13573570+destory1984@users.noreply.github.com` (저장소 설정에도 박아 둠). push 뒤 깃허브 API 로 확인.
 
@@ -67,7 +67,7 @@
 - **시세를 여러 사람에게 보여 주는 서버** — 위 설계 결정 참고.
 - **README 목소리 표의 「윈도우 음성 — 인터넷이 끊겼을 때」 줄** — 인터넷이 끊기면 시세도 못 받으니 뜻이 없다. 코드의 SAPI 물러나기는 Edge 가 막힐 때를 위해 남겼다.
 - **Edge 음성 +30%** — 빠르다고 해서 +20% 로 내렸다.
-- **같은 이름으로 README 화면 사진 덮어쓰기** — 깃허브·브라우저가 옛 사진을 계속 보여 준다. 바꿀 때는 이름을 새로 짓는다(지금 `docs/screen_v0.1.png`).
+- **같은 이름으로 README 화면 사진 덮어쓰기** — 깃허브·브라우저가 옛 사진을 계속 보여 준다. 바꿀 때는 이름을 새로 짓는다(지금 `docs/screen_2026-09-25.png`).
 - **값이 바뀔 때 칸 깜박임** — 사용자가 없애라고 했다.
 
 ## 아직 확인 못 한 것
@@ -98,7 +98,7 @@
 | `kis_signal.py` | 매수·매도 시그널 (`rsi_band`, `signals`) |
 | `static/index.html` | 웹 화면 한 파일 (lightweight-charts 4.2.3, CDN) |
 | `tts_server.py` | 로컬 Qwen3-TTS 서버 (선택) |
-| `requirements.txt`, `README.md`, `TODO.md`, `NOTES.md`, `docs/screen_v0.1.png` | |
+| `requirements.txt`, `README.md`, `TODO.md`, `NOTES.md`, `docs/screen_2026-09-25.png` | |
 
 저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`(키), `kis_token.json`, `kis_exchange.json`(거래소 캐시),
 `kis_watchlist.json`(종목 목록), `kis_settings.json`(소리·인사), `kis_alerts.jsonl`(알림 기록), `tts_cache/`, `.venv*/`, `.claude/`.
