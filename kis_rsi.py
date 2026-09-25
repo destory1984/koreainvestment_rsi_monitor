@@ -221,8 +221,9 @@ def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
 #   N 해외지수 · X 환율 — 해외 일별시세(FHKST03030100) 의 요약값을 쓴다
 #   U 국내지수 — 국내업종 현재지수(FHPUP02100000)
 # 다우존스는 한국투자증권 코드를 찾지 못해 뺐다 (.DJI 등은 빈 값이 온다).
+# 띠에 이 차례로 놓인다. 비트코인은 한국투자증권에 없어 업비트에서 받는다 (kind "BTC").
 MARKETS = [("S&P500", "N", "SPX"), ("나스닥", "N", "COMP"), ("코스피", "U", "0001"),
-           ("니케이", "N", "JP#NI225"), ("원/달러", "X", "FX@KRW")]
+           ("원/달러", "X", "FX@KRW"), ("비트코인", "BTC", "KRW-BTC"), ("니케이", "N", "JP#NI225")]
 
 
 def fetch_market(appkey, secret, kind, code):

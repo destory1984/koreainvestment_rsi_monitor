@@ -250,16 +250,13 @@ class Hub:
         out = []
         for name, kind, code in k.MARKETS:
             try:
-                price, rate = k.fetch_market(self.appkey, self.secret, kind, code)
+                price, rate = (k.fetch_bitcoin() if kind == "BTC"
+                               else k.fetch_market(self.appkey, self.secret, kind, code))
             except Exception:
                 price, rate = None, None
             out.append({"name": name, "price": price, "rate": rate, "kind": kind})
-            time.sleep(0.1)
-        try:
-            price, rate = k.fetch_bitcoin()
-        except Exception:
-            price, rate = None, None
-        out.append({"name": "비트코인", "price": price, "rate": rate, "kind": "BTC"})
+            if kind != "BTC":
+                time.sleep(0.1)
         return out
 
     async def markets_loop(self):
