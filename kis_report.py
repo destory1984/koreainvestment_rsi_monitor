@@ -659,7 +659,7 @@ def prereg_section(info, all_rows, bases, mid, per_day, cost, since, which):
         ("  · 참고: 보통 다이버전스 (뒤 3봉)", [r for r in div if not r["hidden"]]),
         ("  · 참고: 지금 5분봉 알림", five),
     ]
-    fresh = since and since >= PREREG_SINCE
+    fresh = (since and since >= PREREG_SINCE) or which == "new"   # 새 종목은 09-28 에 처음 받아 규칙을 만들 때 안 봤다
     warn = ("" if fresh else
             f"<p class='neg'><b>판정용 아님</b> — 이 보고서엔 규칙을 만들 때 본 날이 섞여 있다. "
             f"<code>python kis_report.py --since {PREREG_SINCE}</code> (새 종목만이면 <code>--set new</code> 도) 로 만든 것으로만 판정한다.</p>")
