@@ -386,9 +386,21 @@ function sigCell(r) {
          `<span class="dim" title="${esc(x.trend)}">${t}</span>`;
 }
 
+// 그 종목 시장이 하루 쉬는 때 (주말·휴일). 장 마감(평일 밤)은 아니다
+const marketClosed = r => (r.excd === "KRX" ? krSession() : usSession())[0].startsWith("휴장");
+
 function cells(r) {
   const krx = r.excd === "KRX";
   const d = krx ? 1 : 4;
+  // 장이 없는 날에는 이름·가격·등락만 두고 「휴장」. 지표는 어제 값이라 헷갈리니 비운다
+  if (marketClosed(r)) return [
+    (r.mute ? `<span class="mtag" data-symb="${esc(r.symb)}" title="이 종목은 소리를 껐다 (기록은 남는다). 누르면 켠다">🔇</span> ` : "") +
+      (krx ? esc(r.name) : r.symb),
+    fmtPrice(r.price, krx),
+    r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
+    '<span class="dim">휴장</span>',
+    "", "", "", "", "", "", "", "",
+  ];
   return [
     // 종목 이름도 RSI 추이(▲▼)와 같은 색으로
     // 소리를 끈 종목은 이름 앞에 🔇 (이름이 길면 뒤가 잘리니 앞에)
@@ -759,7 +771,8 @@ function sessionsHtml() {
 }
 
 let lastMarkets = [];
-setInterval(() => renderMarkets(lastMarkets), 30000);   // 남은 시간을 새로 쓴다
+// 남은 시간을 새로 쓰고, 장이 열리고 닫히는 것(휴장 줄)도 반영한다
+setInterval(() => { renderMarkets(lastMarkets); Object.values(rows).forEach(renderRow); }, 30000);
 
 function renderMarkets(list) {
   lastMarkets = list || [];
