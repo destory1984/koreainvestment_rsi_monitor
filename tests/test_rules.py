@@ -134,6 +134,28 @@ class SignalTest(unittest.TestCase):
     def test_no_signal_without_arming(self):
         self.assertEqual(ks.signals(bars_from(self.wiggle(200))), [])
 
+    def test_sell_on_bar_that_spikes_then_closes_back(self):
+        # 09-25 TSLA 07:40 처럼: 앞 봉 종가 RSI 가 65 위, 이번 봉은 봉 안에서 더 치솟았다가 65 밑으로 닫힘
+        closes = self.wiggle(40) + [100 + 0.5 * i for i in range(1, 9)]
+        bars = bars_from(closes)
+        top = closes[-1]
+        bars.append({"time_us": "20260924 134000", "open": top, "high": top + 1.0, "low": top - 1.2,
+                     "close": top - 1.2, "volume": 1})
+        band = ks.rsi_band(bars)
+        self.assertGreaterEqual(band[-2][0], al.UPPER)               # 앞 봉 종가는 65 위
+        self.assertLess(band[-1][0], al.UPPER)                       # 이번 봉 종가는 65 밑
+        self.assertGreater(band[-1][2], band[-2][2])                 # 봉 안 최고는 더 높았다
+        sig = ks.signals(bars)
+        self.assertEqual((sig[-1].side, sig[-1].bar), ("sell", "20260924 134000"))
+
+    def test_signal_comes_when_rsi_returns(self):
+        # 옛 규칙(MACD 부호)은 꼭대기에서 한참 뒤에 났다. 지금은 RSI 가 선 안으로 돌아오는 봉에서 난다
+        bars = self.v_shape(15, 15)
+        band = ks.rsi_band(bars)
+        i = next(j for j, b in enumerate(bars) if b["time_us"] == ks.signals(bars)[0].bar)
+        self.assertLessEqual(band[i - 1][0], al.LOWER)
+        self.assertGreater(band[i][0], al.LOWER)
+
     def test_no_signal_when_arming_is_off(self):
         self.assertEqual(ks.signals(self.v_shape(15, 15), arm_bars=0), [])
 
