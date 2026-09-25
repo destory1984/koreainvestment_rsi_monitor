@@ -8,7 +8,8 @@
 ## 지금 상태
 
 - 저장소: https://github.com/destory1984/koreainvestment_rsi_monitor (공개). 로컬 `C:\_c\koreainvest`, 브랜치 `main`.
-  `9afbe87` 까지 push 됨. **`962795e`(실제 알림 성적)와 이 NOTES 커밋은 아직 push 안 함.**
+  09-25 밤 `005d48c` 까지 push 됨. 그날 밤 커밋들은 시작 인사 목소리 노트를 빼느라 다시 써서 강제 push 했다
+  (옛 것은 로컬 가지 `backup-before-scrub`). **목소리 이야기는 저장소 밖 `NOTES.local.md` 에만 적는다 — 저장소는 공개.**
 - **커밋은 기능 하나 끝날 때마다 묻지 말고 한다. push 는 사용자가 시킬 때만.** 커밋 끝에 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - 웹 서버는 사용자가 띄워 둔다 (09-25 22:10 쯤 다시 켬 — 32번까지 들어가 있다). **Claude 가 새 서버를 띄우지 않는다** — 앱키 하나에 실시간 연결 하나라 사용자 서버가 끊긴다.
   사용자가 「서버 다시 켰어, 확인해줘」 하면: `/api/state` 가 200 이 될 때까지 기다리고(켜는 데 20~30초), 바뀐 것을 API·화면(localhost 탭 새로고침)으로 본다.
