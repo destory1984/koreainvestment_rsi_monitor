@@ -4,6 +4,7 @@ __pycache__/
 kis_config.json
 kis_token.json
 kis_exchange.json
+kis_holidays.json
 
 # Claude Code 미리보기 설정
 .claude/

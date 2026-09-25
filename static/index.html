@@ -661,19 +661,28 @@ function setMarkers() {
 // 그 도시의 요일(0=일)과 자정부터 분
 function clock(tz) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short",
+    year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map(x => [x.type, x.value]));
-  return { wd: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday), min: +p.hour * 60 + +p.minute };
+  return { wd: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday), min: +p.hour * 60 + +p.minute,
+           ymd: `${p.year}-${p.month}-${p.day}` };
 }
 
-// [이름, 끝나는 분(자정부터. 다음 날로 넘어가면 1440 보다 크다), 열려 있나]. 휴장일은 따지지 않는다
-// 미국은 동부 시각. 주간거래(한국 낮)는 일~목요일 20:00 부터 다음 날 04:00 까지 (서버 us_day_session 과 같다)
+// 'YYYY-MM-DD' 의 다음 날
+const nextDay = ymd => new Date(Date.parse(ymd + "T00:00:00Z") + 864e5).toISOString().slice(0, 10);
+const holiday = (market, ymd) => ((cfg.holidays || {})[market] || []).includes(ymd);
+const HOLIDAY = ["휴장 (휴일)", 0, false];
+
+// [이름, 끝나는 분(자정부터. 다음 날로 넘어가면 1440 보다 크다), 열려 있나]. 휴장일은 서버가 준다
+// 미국은 동부 시각. 주간거래(한국 낮)는 일~목요일 20:00 부터 다음 날 04:00 까지 (서버 us_day_session 과 같다).
+// 밤 세션은 다음 날 장에 딸린 것이라 다음 날이 휴일이면 쉰다고 본다
 function usSession() {
-  const { wd, min } = clock("America/New_York");
+  const { wd, min, ymd } = clock("America/New_York");
   const H = h => h * 60;
   if (wd === 6 || (wd === 0 && min < H(20))) return ["휴장", 0, false];
-  if (min < H(4)) return wd === 0 ? ["휴장", 0, false] : ["주간거래", H(4), true];
-  if (min >= H(20)) return wd === 5 ? ["휴장", 0, false] : ["주간거래", H(28), true];
+  if (min < H(4)) return wd === 0 ? ["휴장", 0, false] : holiday("us", ymd) ? HOLIDAY : ["주간거래", H(4), true];
+  if (min >= H(20)) return wd === 5 ? ["휴장", 0, false] : holiday("us", nextDay(ymd)) ? HOLIDAY : ["주간거래", H(28), true];
   if (wd === 0) return ["휴장", 0, false];
+  if (holiday("us", ymd)) return HOLIDAY;
   if (min < H(9.5)) return ["프리장", H(9.5), true];
   if (min < H(16)) return ["정규장", H(16), true];
   return ["애프터", H(20), true];
@@ -681,9 +690,10 @@ function usSession() {
 
 // 한국은 서울 시각. 정규장 09:00~15:30, 그 앞뒤 시간외
 function krSession() {
-  const { wd, min } = clock("Asia/Seoul");
+  const { wd, min, ymd } = clock("Asia/Seoul");
   const H = h => h * 60;
   if (wd === 0 || wd === 6) return ["휴장", 0, false];
+  if (holiday("kr", ymd)) return HOLIDAY;
   if (min >= H(8.5) && min < H(9)) return ["장전 시간외", H(9), true];
   if (min >= H(9) && min < H(15.5)) return ["정규장", H(15.5), true];
   if (min >= H(15.5) && min < H(18)) return ["장후 시간외", H(18), true];
@@ -880,6 +890,7 @@ function connect() {
     else if (m.type === "status") setStatus(m.status);
     else if (m.type === "alert") addEvent(m.event);
     else if (m.type === "after") setAfter(m.events);
+    else if (m.type === "holidays") { cfg.holidays = m.holidays; renderMarkets(lastMarkets); }
     else if (m.type === "markets") renderMarkets(m.markets);
     else if (m.type === "reload") loadState();
   };

@@ -70,6 +70,7 @@ class Hub:
         self.dirty = set()
         self.status = "시작 중"
         self.markets = []         # 한 줄 띠: [{"name", "price", "rate"}]
+        self.kr_closed, self.kr_closed_day = [], ""   # 국내 휴장일과 그것을 받은 날
         self.ws = None            # 한국투자증권 실시간 연결 (열려 있을 때만)
         self.approval_key = None
         self.day = k.us_day_session()   # 미국 주간거래 시간이면 해외 종목을 R 쪽으로 구독한다
@@ -329,9 +330,26 @@ class Hub:
                 time.sleep(0.1)
         return out
 
+    def holidays(self):
+        return {"kr": self.kr_closed, "us": sorted(k.US_HOLIDAYS)}
+
+    def load_holidays(self):
+        """국내 휴장일을 하루 한 번 받는다 (블로킹). 받았으면 True."""
+        today = datetime.now().strftime("%Y%m%d")
+        if self.kr_closed_day == today:
+            return False
+        try:
+            self.kr_closed, self.kr_closed_day = k.kr_holidays(self.appkey, self.secret), today
+            return True
+        except Exception as e:
+            print(f"국내 휴장일 — {e}", flush=True)
+            return False
+
     async def markets_loop(self):
-        """지수는 실시간으로 밀어 주는 통로가 없어 10초마다 묻는다."""
+        """지수는 실시간으로 밀어 주는 통로가 없어 10초마다 묻는다. 날이 바뀌면 휴장일도 새로 받는다."""
         while True:
+            if await asyncio.to_thread(self.load_holidays):
+                await self.broadcast({"type": "holidays", "holidays": self.holidays()})
             try:
                 self.markets = await asyncio.to_thread(self.fetch_markets)
                 await self.broadcast({"type": "markets", "markets": self.markets})
@@ -560,7 +578,7 @@ class Hub:
                 "max": MAX_TICKERS, "sound": self.settings["sound"], "markets": self.markets,
                 "signal_sound": self.settings["signal_sound"],
                 "sound_sessions": self.settings["sound_sessions"], "quiet": self.settings["quiet"],
-                "session_names": SOUND_SESSIONS,
+                "session_names": SOUND_SESSIONS, "holidays": self.holidays(),
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 

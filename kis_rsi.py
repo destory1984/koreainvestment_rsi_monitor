@@ -32,6 +32,7 @@ HERE = Path(__file__).parent
 CONFIG = HERE / "kis_config.json"
 TOKEN_CACHE = HERE / "kis_token.json"
 EXCHANGE_CACHE = HERE / "kis_exchange.json"
+HOLIDAY_CACHE = HERE / "kis_holidays.json"   # 국내 휴장일. 하루 한 번만 묻는다
 
 REST = "https://openapi.koreainvestment.com:9443"
 WS = "ws://ops.koreainvestment.com:21000/tryitout"
@@ -367,26 +368,67 @@ def normalize(tr_id, rec):
             "XHMS": rec["STCK_CNTG_HOUR"]}
 
 
+# 뉴욕증권거래소가 하루 종일 쉬는 날 (동부 날짜). 한국투자증권에 미국 휴장일 조회가 없어 적어 둔다.
+# 일찍 닫는 날(추수감사절 다음 날·크리스마스 이브 13:00)은 따지지 않는다. 2028년 것은 그해 전에 더할 것.
+US_HOLIDAYS = {
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19",
+    "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18",
+    "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+}
+
+
+def us_closed(d):
+    """그날(동부 날짜) 미국 장이 쉬는가: 주말이나 휴장일."""
+    return d.weekday() >= 5 or d.isoformat() in US_HOLIDAYS
+
+
 def us_day_session(now=None):
     """미국 주간거래 시간인가. 미국 동부 20:00~04:00, 일요일 밤부터 금요일 새벽까지 (한국 낮).
-    이때는 정규장 쪽(D) 실시간에 체결이 오지 않아 주간거래 쪽(R)으로 받아야 한다. 휴장일은 따지지 않는다."""
+    이때는 정규장 쪽(D) 실시간에 체결이 오지 않아 주간거래 쪽(R)으로 받아야 한다.
+    밤 세션은 다음 날 장에 딸린 것으로 보고, 다음 날이 휴장이면 쉰다고 본다 (확인 못 함)."""
     t = now or datetime.now(NEW_YORK)
     if t.hour >= 20:
-        return t.weekday() in (6, 0, 1, 2, 3)
+        return not us_closed((t + timedelta(days=1)).date())
     if t.hour < 4:
-        return t.weekday() in (0, 1, 2, 3, 4)
+        return not us_closed(t.date())
     return False
 
 
 def us_session(now=None):
-    """미국 동부 시각으로 지금 세션: "day"(주간거래) / "pre" / "regular" / "after" / None(휴장). 휴장일은 모른다."""
+    """미국 동부 시각으로 지금 세션: "day"(주간거래) / "pre" / "regular" / "after" / None(휴장)."""
     t = now or datetime.now(NEW_YORK)
     if us_day_session(t):
         return "day"
-    if t.weekday() >= 5:
+    if us_closed(t.date()):
         return None
     h = t.hour + t.minute / 60
     return "pre" if 4 <= h < 9.5 else "regular" if 9.5 <= h < 16 else "after" if 16 <= h < 20 else None
+
+
+def kr_holidays(appkey, secret):
+    """오늘부터 24일쯤 국내 장이 쉬는 날들 ['YYYY-MM-DD', ...] (국내휴장일조회 CTCA0903R).
+    한국투자증권이 하루 한 번쯤만 부르라고 해서 kis_holidays.json 에 그날 받은 것을 둔다."""
+    today = datetime.now().strftime("%Y%m%d")
+    try:
+        cached = json.loads(HOLIDAY_CACHE.read_text(encoding="utf-8"))
+        if cached.get("fetched") == today:
+            return cached["closed"]
+    except Exception:
+        pass
+    token = get_token(appkey, secret)
+    r = requests.get(f"{REST}/uapi/domestic-stock/v1/quotations/chk-holiday",
+                     headers={"authorization": f"Bearer {token}", "appkey": appkey, "appsecret": secret,
+                              "tr_id": "CTCA0903R", "custtype": "P"},
+                     params={"BASS_DT": today, "CTX_AREA_NK": "", "CTX_AREA_FK": ""}, timeout=10)
+    r.raise_for_status()
+    j = r.json()
+    if j.get("rt_cd") != "0":
+        raise RuntimeError(f"휴장일 {j.get('msg_cd')} {j.get('msg1')}")
+    closed = [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d, open_ in
+              ((x["bass_dt"], x["opnd_yn"]) for x in j.get("output") or []) if open_ != "Y"]
+    HOLIDAY_CACHE.write_text(json.dumps({"fetched": today, "closed": closed}), encoding="utf-8")
+    return closed
 
 
 class KisInUse(Exception):
