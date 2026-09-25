@@ -61,6 +61,7 @@ class Hub:
         for key in SOUND_SESSIONS:
             self.settings["sound_sessions"].setdefault(key, True)
         self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
+        self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.signals = {}         # 종목 -> 닫힌 봉들에서 난 시그널 전부
         self.closed = set()       # 새 봉이 생겨 앞 봉이 닫힌 종목
         self.clients = set()
@@ -222,6 +223,9 @@ class Hub:
             self.signals.pop(symb, None)
             self.tf.pop(symb, None)
             self.save()
+            if symb in self.settings["mute"]:
+                self.settings["mute"].remove(symb)
+                self.save_settings()
             self.dirty.discard(symb)
             if self.ws:
                 try:
@@ -432,6 +436,8 @@ class Hub:
 
     def muted(self, book):
         """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열."""
+        if book.symb in self.settings["mute"]:
+            return "종목 소리 끔"
         q = self.settings["quiet"]
         if q["on"]:
             now, a, b = datetime.now().strftime("%H:%M"), q["from"], q["to"]
@@ -441,6 +447,14 @@ class Hub:
         if key and not self.settings["sound_sessions"].get(key, True):
             return f"{SOUND_SESSIONS[key]} 소리 끔"
         return ""
+
+    async def set_mute(self, symb, on):
+        if symb not in self.books:
+            raise KeyError(symb)
+        mute = [s for s in self.settings["mute"] if s != symb] + ([symb] if on else [])
+        self.settings["mute"] = mute
+        self.save_settings()
+        await self.broadcast({"type": "rows", "rows": [self.row(self.books[symb])]})
 
     def set_sound(self, on):
         self.settings["sound"] = bool(on)
@@ -461,6 +475,7 @@ class Hub:
         g = self.gates.get(b.symb)
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
                 "time": b.us_time, "day": b.day_quote, "night": b.night, **ind,
+                "mute": b.symb in self.settings["mute"],
                 "mtf": self.mtf(b, ind["rsi"]),
                 "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
                 "rearm": bool(g and not all(g.armed.values())),
@@ -613,6 +628,16 @@ async def api_night(symb: str = Body(...), on: bool = Body(...)):
     except KeyError:
         raise HTTPException(404, symb)
     return hub.books[symb.upper()].night
+
+
+@app.post("/api/mute")
+async def api_mute(symb: str = Body(...), on: bool = Body(...)):
+    """그 종목만 소리 끄기 (on=true 면 끈다). 알림 기록에는 「🔇 종목 소리 끔」으로 남는다."""
+    try:
+        await hub.set_mute(symb.upper(), on)
+    except KeyError:
+        raise HTTPException(404, symb)
+    return {"symb": symb.upper(), "mute": on}
 
 
 @app.post("/api/sound-when")

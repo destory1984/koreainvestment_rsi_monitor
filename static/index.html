@@ -94,11 +94,14 @@
   tbody tr:hover td.grip span, tbody tr.sel td.grip span, tbody tr.dragging td.grip span { visibility: visible; }
   tbody tr.dragging { background: var(--sel); opacity: .7; }
   tbody.sorting, tbody.sorting td.grip { cursor: grabbing; }
-  td.del { width: 1%; padding: 0 4px; }
+  td.del { width: 1%; padding: 0 4px; white-space: nowrap; }
   td.del button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer;
                   padding: 2px 5px; border-radius: 4px; visibility: hidden; display: inline-flex; }
   tbody tr:hover td.del button, tbody tr.sel td.del button { visibility: visible; }
   td.del button:hover { color: var(--neg); background: var(--bg); }
+  td.del button.mute[data-on="true"] { visibility: visible; color: var(--neg); }
+  td.del button.mute:hover { color: var(--text); }
+  .mtag { cursor: pointer; font-size: calc(var(--fs) * .85); }
   @media (hover: none) { td.del button, td.grip span { visibility: visible; } }
   .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
@@ -345,7 +348,9 @@ function cells(r) {
   const d = krx ? 1 : 4;
   return [
     // 종목 이름도 RSI 추이(▲▼)와 같은 색으로
-    `<span class="${["down", "", "up"][rsiTrend(r) + 1]}">${krx ? esc(r.name) : r.symb}</span>`,
+    // 소리를 끈 종목은 이름 앞에 🔇 (이름이 길면 뒤가 잘리니 앞에)
+    (r.mute ? `<span class="mtag" data-symb="${esc(r.symb)}" title="이 종목은 소리를 껐다 (기록은 남는다). 누르면 켠다">🔇</span> ` : "") +
+      `<span class="${["down", "", "up"][rsiTrend(r) + 1]}">${krx ? esc(r.name) : r.symb}</span>`,
     (r.day ? '<span class="tag" title="미국 주간거래(한국 낮) 체결가">주간</span>' : "") +
       fmtPrice(r.price, krx),
     r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
@@ -367,6 +372,11 @@ const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" strok
   '<path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
   '<path d="M10 11v6M14 11v6"/></svg>';
 
+const BELL = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>' +
+  '<path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+const BELL_OFF = BELL.replace("</svg>", '<path d="M2 2l20 20"/></svg>');
+
 function renderRow(r) {
   let tr = document.getElementById("r-" + r.symb);
   const c = cells(r);
@@ -375,17 +385,36 @@ function renderRow(r) {
     tr.id = "r-" + r.symb;
     tr.title = r.excd === "KRX" ? `${r.name} · ${r.symb}` : `${r.excd}:${r.symb}`;
     tr.innerHTML = `<td class="grip" title="끌어서 차례 바꾸기">${GRIP}</td>` + c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 10 ? "last" : ""}">${x}</td>`).join("") +
-                   `<td class="del"><button title="빼기" aria-label="종목 빼기">${TRASH}</button></td>`;
+                   `<td class="del"><button class="mute"></button><button class="trash" title="빼기" aria-label="종목 빼기">${TRASH}</button></td>`;
     tr.onclick = () => select(r.symb);
     dragRow(tr, tr.querySelector(".grip"));
-    tr.querySelector(".del button").onclick = e => { e.stopPropagation(); removeTicker(r.symb); };
+    tr.querySelector(".del .mute").onclick = e => { e.stopPropagation(); setMute(r.symb, !rows[r.symb].mute); };
+    tr.querySelector(".del .trash").onclick = e => { e.stopPropagation(); removeTicker(r.symb); };
     $("#rows").appendChild(tr);
     if (r.symb === selected) tr.classList.add("sel");
   } else {
     c.forEach((x, i) => { const td = tr.children[i + 1]; if (td.innerHTML !== x) td.innerHTML = x; });
   }
+  const mb = tr.querySelector(".del .mute");
+  if (mb.dataset.on !== String(!!r.mute)) {
+    mb.dataset.on = String(!!r.mute);
+    mb.innerHTML = r.mute ? BELL_OFF : BELL;
+    mb.title = r.mute ? "이 종목 소리 켜기" : "이 종목만 소리 끄기 (알림 기록은 남는다)";
+    mb.setAttribute("aria-label", mb.title);
+  }
   rows[r.symb] = r;
 }
+
+async function setMute(symb, on) {
+  const res = await fetch("/api/mute", { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ symb, on }) }).catch(() => null);
+  if (!res || !res.ok) return setMsg(`${symb} 소리를 바꾸지 못했다`, true);
+  setMsg(`${symb}: 소리를 ${on ? "껐다 (알림 기록은 남는다)" : "켰다"}`);
+}
+$("#rows").addEventListener("click", e => {
+  const t = e.target.closest(".mtag");
+  if (t) setMute(t.dataset.symb, false);
+});
 
 // 손잡이(⋮⋮)를 끌어 줄 차례를 바꾼다. 마우스와 손가락 모두 되게 pointer 이벤트로 한다.
 // 줄을 옮기면 pointer capture 가 풀리므로 움직임은 window 에서 받는다

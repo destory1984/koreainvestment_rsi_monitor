@@ -47,6 +47,7 @@
 17. **목소리** — 로컬 TTS(Qwen3-TTS 1.7B, Sohee) → Edge(SunHi, +20%) → SAPI. BE 는 「블룸에너지」. 캐시 86개 모두 로컬 `.wav`.
     `tts_make.py` 가 로컬 TTS 서버를 잠깐 띄워 없는 문장만 녹음하고 내린다.
 18. **버전 0.2** (제목).
+19. **종목만 소리 끄기** (09-25) — 줄 끝 종 단추(`POST /api/mute`), 설정 `mute`. `muted()` 가 맨 먼저 본다. 이름 앞 🔇 를 눌러도 켠다.
 
 ## 채점 결과 (09-25 첫 번째, 미국 11종목, 09-14~09-25, 60분 뒤)
 
@@ -112,7 +113,7 @@
 ## 다음 단계
 
 1. 09-28(월) 장중: 위 「아직 확인 못 한 것」 — 국내 실시간, 자동 시작, 알림 시간대.
-2. 10-02(금) 17:30 예약 작업이 채점을 다시 돌리고 알린다 → 사용자와 규칙 변경을 정하고 **TODO 4번 종목별 설정**(선을 종목마다, 종목만 소리 끄기).
+2. 10-02(금) 17:30 예약 작업이 채점을 다시 돌리고 알린다 → 사용자와 규칙 변경을 정하고 **TODO 4번 종목별 선**.
 3. 그 뒤 후보: 국내 종목 되감기, 수집 시간 줄이기, 텔레그램 알림.
 
 ## 파일
@@ -120,7 +121,7 @@
 | 파일 | 하는 일 |
 |---|---|
 | `kis_rsi.py` | 키(`load_keys`: 환경변수 → `kis_config.json` → `~/.bashrc`)·토큰, 분봉(미국 `fetch_bars`(keyb 거슬러), 국내 `fetch_kr_bars`, 주간 `fetch_night`, `merge_bars`), 현재가 `fetch_quote`, 지수 `MARKETS`, 세션 `us_day_session`/`us_session`, 실시간 `live`/`subscribe`, RSI·MACD, `Book`(봉 갱신, `key_for`, `night`, `day_quote`), `px`, 터미널 명령 |
-| `kis_web.py` | FastAPI 서버 `Hub`: 종목(`_add`, `_bars`, `_tf_books`, `load_tf`, `reorder`, `set_night`), 실시간(`kis_loop`, `session_loop`), 알림·시그널(`check_alerts`, `check_signals`, `muted`), 지수 띠, `row`/`mtf`/`state`. API `/api/state` `/api/chart/{symb}` `/api/tickers` `/api/order` `/api/night` `/api/sound` `/api/signal-sound` `/api/sound-when` `/api/sound/test` `/ws`. 옵션 `--log`, 중복 막기 |
+| `kis_web.py` | FastAPI 서버 `Hub`: 종목(`_add`, `_bars`, `_tf_books`, `load_tf`, `reorder`, `set_night`), 실시간(`kis_loop`, `session_loop`), 알림·시그널(`check_alerts`, `check_signals`, `muted`), 지수 띠, `row`/`mtf`/`state`. API `/api/state` `/api/chart/{symb}` `/api/tickers` `/api/order` `/api/night` `/api/mute` `/api/sound` `/api/signal-sound` `/api/sound-when` `/api/sound/test` `/ws`. 옵션 `--log`, 중복 막기 |
 | `kis_alert.py` | `Gate`(선·재무장·쿨다운, `check(v, now)`), 읽는 법 `TTS_SAY_AS`, 문장 `say_breach`/`say_signal`/`phrases`, `Voice`(캐시, 로컬/Edge/SAPI) |
 | `kis_signal.py` | 매수·매도 시그널 (`rsi_band`, `signals`) |
 | `kis_replay.py` | 알림 채점(되감기) + `--collect`(주간거래 분봉 모으기). 캐시 `replay_cache/` |
@@ -130,7 +131,7 @@
 | `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25.png` | |
 
 저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`, `kis_token.json`, `kis_exchange.json`, `kis_watchlist.json`(종목 목록),
-`kis_settings.json`(소리·인사·`night`·`sound_sessions`·`quiet`), `kis_alerts.jsonl`(알림 기록), `tts_cache/`, `replay_cache/`,
+`kis_settings.json`(소리·인사·`night`·`sound_sessions`·`quiet`·`mute`), `kis_alerts.jsonl`(알림 기록), `tts_cache/`, `replay_cache/`,
 `kis_web.log*`, `.venv*/`(로컬 TTS 는 `.venv_tts`), `.claude/`. 저장소 폴더의 `start` 파일은 사용자 것이라 건드리지 않는다.
 
 ## 시험할 때
