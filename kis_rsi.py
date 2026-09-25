@@ -388,6 +388,7 @@ class Book:
         self.price = info.get("price") or (bars[-1]["close"] if bars else None)
         self.rate = info.get("rate")
         self.us_time = ""
+        self.day_quote = False   # 지금 가격이 미국 주간거래 체결가인가
 
     @property
     def key(self):
@@ -402,6 +403,7 @@ class Book:
     def on_quote(self, d):
         """주간거래 체결: 가격·등락·시각만 고친다. 거래가 뜸해 RSI 가 흔들리니 분봉에는 넣지 않는다."""
         self.price, self.rate, self.us_time = float(d["LAST"]), float(d["RATE"]), d["XHMS"]
+        self.day_quote = True
 
     def on_tick(self, d):
         """체결 하나를 반영한다. 새 봉이 생기면 True."""
@@ -417,6 +419,7 @@ class Book:
         b["close"], b["high"], b["low"] = price, max(b["high"], price), min(b["low"], price)
         b["volume"] += int(d["EVOL"] or 0)
         self.price, self.rate, self.us_time = price, float(d["RATE"]), d["XHMS"]
+        self.day_quote = False
         return new
 
     def series(self, period=14):

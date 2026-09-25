@@ -357,7 +357,7 @@ class Hub:
         bar = b.bars[-1] if b.bars else None
         g = self.gates.get(b.symb)
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
-                "time": b.us_time, **ind,
+                "time": b.us_time, "day": b.day_quote, **ind,
                 "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
                 "rearm": bool(g and not all(g.armed.values())),
                 "last_alert": self.last_alert(b.symb),
