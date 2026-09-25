@@ -248,7 +248,7 @@
 
 ## 시험할 때
 
-- **규칙을 고치면 `python -m unittest discover tests` 부터** (50개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
+- **규칙을 고치면 `python -m unittest discover tests` 부터** (58개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
   `Gate` 시험은 시각을 `N`(10억 초)부터 준다 — 첫 쿨다운이 0 초부터 세어진다.
 - 키: `source ~/.bashrc` 하거나, 이제는 `load_keys` 가 `.bashrc` 를 직접 읽는다. 키 값은 화면에 찍지 않는다.
 - Git Bash 에서 한글: `PYTHONIOENCODING=utf-8`.

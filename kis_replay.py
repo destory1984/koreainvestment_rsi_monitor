@@ -114,7 +114,7 @@ def session(t, kr=False):
         return "주간"
     if h < 9.5:
         return "프리"
-    if h < 16:
+    if h < (13 if k.us_early_close(t.date()) else 16):   # 추수감사절 다음 날 등은 13:00 에 닫는다
         return "정규"
     return "애프터"
 

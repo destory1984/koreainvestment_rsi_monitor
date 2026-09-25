@@ -630,6 +630,8 @@ class ReplayTest(unittest.TestCase):
     def test_kr_session(self):
         self.assertEqual(rp.session(datetime(2026, 9, 23, 10, 0), kr=True), "정규")
         self.assertEqual(rp.session(datetime(2026, 9, 23, 21, 0)), "주간")
+        self.assertEqual(rp.session(datetime(2026, 11, 27, 13, 30)), "애프터")    # 조기 폐장
+        self.assertEqual(rp.session(datetime(2026, 11, 20, 13, 30)), "정규")
 
 
 # ── 1분봉 쌓기·봉 길이 채점 ────────────────────────────────────
