@@ -168,10 +168,19 @@ def put_bars(con, excd, symb, nmin, bars, replace=True):
     return len(times - have)
 
 
-def get_bars(con, excd, symb, nmin):
-    """쌓아 둔 봉 전부 (오래된 것부터)."""
-    cur = con.execute("select t, open, high, low, close, volume from bars "
-                      "where excd=? and symb=? and nmin=? order by t", (excd, symb, nmin))
+def get_bars(con, excd, symb, nmin, before=None, days=None):
+    """쌓아 둔 봉 (오래된 것부터). before 를 주면 그 시각보다 앞선 것만, days 를 주면 그중 마지막 days 날짜만."""
+    key = (excd, symb, nmin)
+    where, args = "excd=? and symb=? and nmin=?", key
+    if before:
+        where, args = where + " and t<?", args + (before,)
+    if days:
+        dates = con.execute(f"select distinct substr(t, 1, 8) d from bars where {where} order by d desc limit ?",
+                            args + (days,)).fetchall()
+        if not dates:
+            return []
+        where, args = where + " and t>=?", args + (dates[-1][0],)
+    cur = con.execute(f"select t, open, high, low, close, volume from bars where {where} order by t", args)
     return [dict(zip(("time_us",) + BAR_FIELDS, r)) for r in cur]
 
 

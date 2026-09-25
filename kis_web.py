@@ -40,6 +40,7 @@ HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
 AFTER = (15, 30, 60)   # 알림 뒤 이만큼 분 지나 가격이 알림 쪽으로 갔는지 본다 (kis_replay 와 같은 셈)
 AFTER_SLACK = 10 * 60  # 그 시각 뒤 이만큼(초) 안에 시작한 봉이 없으면 장이 닫힌 것으로 본다
+HISTORY_DAYS = 5      # 켤 때 받은 분봉 앞에 DB(replay_cache/bars.db)에서 이어 붙일 날짜 수. 0 이면 안 붙인다
 MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
 SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regular": "미국 정규장",
                   "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
@@ -125,13 +126,35 @@ class Hub:
         bars = k.fetch_bars(self.appkey, self.secret, excd, symb, self.nmin)
         if excd not in k.DAY_EXCD:
             self.store([(excd, symb, bars[:-1], True)])
-            return bars, None
+            return self._history(excd, symb, bars, False) + bars, None
         day, have, of = k.fetch_night(self.appkey, self.secret, excd, symb, self.nmin)
         auto = have > of * k.NIGHT_SHARE
         on = self.settings.get("night", {}).get(symb, auto)
         # 받은 것은 되감기 DB 에도 쌓는다 (마지막 봉은 아직 진행 중이라 뺀다). 주간거래 봉은 정규 쪽 봉을 덮지 않는다
         self.store([(excd, symb, bars[:-1], True), (excd, symb, day[:-1], False)], night=(excd, symb, on))
-        return (k.merge_bars(bars, day) if on else bars), {"on": on, "auto": auto, "have": have, "of": of}
+        bars = k.merge_bars(bars, day) if on else bars
+        return self._history(excd, symb, bars, on) + bars, {"on": on, "auto": auto, "have": have, "of": of}
+
+    def _history(self, excd, symb, bars, night_on):
+        """DB 에 쌓인, 받은 봉보다 앞선 봉들 (블로킹). 최근 HISTORY_DAYS 날짜만. 차트를 며칠 뒤까지 보고
+        RSI·MACD 를 긴 기록으로 셈하려는 것이다. 받은 봉과 같은 규칙으로 거른다: 국내는 KRX 정규장만,
+        오버나이트를 안 넣는 미국 종목은 주간거래 봉을 뺀다. 못 읽으면 빈 목록."""
+        if not bars or not HISTORY_DAYS:
+            return []
+        try:
+            con = rp.db()
+            try:
+                old = rp.get_bars(con, excd, symb, self.nmin, before=bars[0]["time_us"], days=HISTORY_DAYS)
+            finally:
+                con.close()
+        except Exception as e:
+            print(f"{symb}: DB 에서 지난 봉을 못 읽음 — {e}", flush=True)
+            return []
+        if excd == "KRX":
+            return [b for b in old if k.KRX_OPEN <= b["time_us"][9:] <= k.KRX_CLOSE]
+        if not night_on:
+            return [b for b in old if rp.session(rp.ts(b["time_us"])) != "주간"]
+        return old
 
     def store(self, items, night=None):
         """분봉을 되감기 DB(replay_cache/bars.db)에 쌓는다 (블로킹). items 는 [(excd, symb, 봉들, 덮어쓸지)].
