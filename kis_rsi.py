@@ -106,8 +106,9 @@ def get_approval_key(appkey, secret):
     return r.json()["approval_key"]
 
 
-def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120):
-    """해외주식분봉조회 (HHDFS76950200). 최신 것부터 온다. 국내 종목은 fetch_kr_bars 로 넘긴다."""
+def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120, keyb=""):
+    """해외주식분봉조회 (HHDFS76950200). 최신 것부터 온다. 국내 종목은 fetch_kr_bars 로 넘긴다.
+    keyb 에 앞서 받은 가장 옛 봉의 'YYYYMMDDHHMMSS' 를 주면 그보다 앞 120개를 받는다 (그 봉부터 겹쳐 온다)."""
     if excd == "KRX":
         return fetch_kr_bars(appkey, secret, symb, nmin)
     token = get_token(appkey, secret)
@@ -115,8 +116,8 @@ def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120):
                      headers={"authorization": f"Bearer {token}", "appkey": appkey,
                               "appsecret": secret, "tr_id": "HHDFS76950200", "custtype": "P"},
                      params={"AUTH": "", "EXCD": excd, "SYMB": symb, "NMIN": str(nmin),
-                             "PINC": "1" if pinc else "0", "NEXT": "", "NREC": str(nrec),
-                             "FILL": "", "KEYB": ""}, timeout=10)
+                             "PINC": "1" if pinc else "0", "NEXT": "1" if keyb else "", "NREC": str(nrec),
+                             "FILL": "", "KEYB": keyb}, timeout=10)
     r.raise_for_status()
     j = r.json()
     if j.get("rt_cd") != "0":

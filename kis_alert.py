@@ -136,8 +136,10 @@ class Gate:
         self.last_alert = {}
         self.armed = {}
 
-    def check(self, v):
-        """새 RSI 를 보고 알릴 것이 있으면 dict, 없으면 None. 억제된 것은 suppressed 에 이유를 단다."""
+    def check(self, v, now=None):
+        """새 RSI 를 보고 알릴 것이 있으면 dict, 없으면 None. 억제된 것은 suppressed 에 이유를 단다.
+        now 는 쿨다운을 셀 시각(초). 되감기에서 봉 시각을 넘긴다. 없으면 지금."""
+        now = time.time() if now is None else now
         zone, strength = level_of(v)
         prev_zone, prev_str = self.level
         self.level = (zone, strength)
@@ -147,21 +149,21 @@ class Gate:
             kind = zone if strength == "warn" else f"{zone}_strong"
             out = {"kind": kind, "zone": zone, "strength": strength,
                    "edge": edge_of(zone, strength), "start": prev_zone == "unknown"}
-            why = self._gate(kind)
+            why = self._gate(kind, now)
             if why:
                 out["suppressed"] = why
             else:
-                self.last_alert[kind] = time.time()
+                self.last_alert[kind] = now
                 self.armed[kind] = False
         self._rearm(v)
         return out
 
-    def _gate(self, kind):
+    def _gate(self, kind, now):
         if not self.armed.get(kind, True):
             edge, upper = self.EDGES[kind]
             back = edge - REARM_MARGIN if upper else edge + REARM_MARGIN
             return f"{_num(back)} {'이하로 내려와야' if upper else '이상으로 올라와야'} 재무장"
-        left = ALERT_COOLDOWN_SEC - (time.time() - self.last_alert.get(kind, 0.0))
+        left = ALERT_COOLDOWN_SEC - (now - self.last_alert.get(kind, 0.0))
         if ALERT_COOLDOWN_SEC and left > 0:
             return f"쿨다운 {left / 60:.1f}분 남음"
         return ""

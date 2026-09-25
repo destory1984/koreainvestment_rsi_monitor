@@ -12,3 +12,4 @@ kis_settings.json
 tts_cache/
 .venv*/
 kis_alerts.jsonl
+replay_cache/
