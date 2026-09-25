@@ -5,7 +5,7 @@ kis_tf.py — 몇 분봉 RSI 로 알림을 울려야 가장 잘 맞는지 견준
 ────────────────────────────────────────────────────────────
 어떻게
 
-1분봉 한 벌(약 25거래일, 한국투자증권이 주는 만큼)을 받아 거기서 3·5·10·15·30·60분봉을 만든다.
+1분봉 한 벌(처음엔 한국투자증권이 주는 약 25거래일, 그 뒤로는 수집이 쌓은 만큼)을 받아 거기서 3·5·10·15·30·60분봉을 만든다.
 그래서 모든 봉 길이가 같은 기간·같은 가격을 본다.
 
 실시간 서버는 체결마다 「진행 중인 봉까지 넣은 RSI」를 알림 규칙(kis_alert.Gate)에 넣는다.
@@ -19,7 +19,7 @@ kis_tf.py — 몇 분봉 RSI 로 알림을 울려야 가장 잘 맞는지 견준
 보합은 빼고 센다. 「기준」은 같은 기간 아무 분에나 같은 쪽으로 들어갔을 때, 「초과」 = 수익 − 기준.
 앞 WARMUP_DAYS 거래일은 긴 봉의 RSI 가 자리 잡는 중이라 모든 봉 길이에서 똑같이 세지 않는다.
 
-주간거래(미국 20:00~04:00) 1분봉은 지금 세션 것만 받아져서 모든 종목에서 뺀다.
+주간거래(미국 20:00~04:00) 1분봉은 지금 세션 것만 받아져서 (수집이 쌓기 시작한 09-25 전 것이 없어) 모든 종목에서 뺀다.
 그래서 서버에서 오버나이트 봉을 넣는 종목(MU·SOXL 등)은 RSI 가 서버와 조금 다르다.
 
 ────────────────────────────────────────────────────────────
@@ -48,18 +48,14 @@ except Exception:
 
 TFS = (1, 3, 5, 10, 15, 30, 60)
 HORIZONS = (15, 30, 60, 120)
-DAYS = 25
 WARMUP_DAYS = 5
 
 
-def load_minutes(con, appkey, secret, excd, symb, days, offline):
-    """1분봉을 받아 DB(nmin=1)에 쌓고, 주간거래를 뺀 전부를 돌려준다."""
+def load_minutes(con, appkey, secret, excd, symb, offline):
+    """DB(nmin=1)의 1분봉에 새 것을 이어 받고, 주간거래를 뺀 전부를 돌려준다.
+    수집(kis_replay --collect)이 날마다 이어 쌓으니 한 달보다 긴 기간도 본다."""
     if not offline:
-        if excd == "KRX":
-            got = k.fetch_kr_bars(appkey, secret, symb, 1, need=days * 391)
-        else:
-            got = rp.fetch_history(appkey, secret, excd, symb, 1, days).values()
-        rp.put_bars(con, excd, symb, 1, got)
+        rp.topup_minutes(con, appkey, secret, excd, symb)
         con.commit()
     bars = rp.get_bars(con, excd, symb, 1)
     if excd == "KRX":
@@ -191,7 +187,6 @@ def main():
     ap = argparse.ArgumentParser(description="몇 분봉 RSI 가 가장 잘 맞는지 견준다")
     ap.add_argument("tickers", nargs="*", help="없으면 kis_watchlist.json 의 종목 전부")
     ap.add_argument("--tf", default=",".join(map(str, TFS)), help="견줄 봉 길이 (분, 쉼표로)")
-    ap.add_argument("--days", type=int, default=DAYS, help=f"거슬러 받을 거래일 (기본 {DAYS})")
     ap.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
     ap.add_argument("--lines", help="모든 종목에 이 RSI 선 (kis_replay --lines 와 같다)")
     ap.add_argument("--by", choices=["종목"], help="종목마다 따로")
@@ -215,7 +210,7 @@ def main():
         else:
             excd, symb = k.resolve(appkey, secret, t)
         try:
-            minutes = load_minutes(con, appkey, secret, excd, symb, args.days, args.offline)
+            minutes = load_minutes(con, appkey, secret, excd, symb, args.offline)
         except Exception as e:
             print(f"{symb}: 건너뜀 — {e}")
             continue

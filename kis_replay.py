@@ -229,16 +229,68 @@ def night_on(appkey, secret, excd, symb, nmin):
     return override.get(symb, have > of * k.NIGHT_SHARE), day
 
 
+# ── 1분봉 쌓기 ────────────────────────────────────────────────
+MIN_DAYS = 25   # 한국투자증권이 거슬러 주는 1분봉 기간 (거래일, 09-25 TSLA 로 확인)
+MIN_PAGES = MIN_DAYS * 16 * 60 // 119 + 1
+NIGHT_PAGES = 6  # 주간거래 1분봉은 지금 세션 것만, 3쪽(약 6시간) 남짓 온다
+
+
+def last_minute(con, excd, symb, night):
+    """DB 에 쌓인 마지막 1분봉 시각. night 면 주간거래(20:00~04:00) 것, 아니면 나머지."""
+    hour = "substr(t, 10, 2)"
+    cond = f"({hour} >= '20' or {hour} < '04')" if night else f"{hour} between '04' and '19'"
+    r = con.execute(f"select max(t) from bars where excd=? and symb=? and nmin=1 and {cond}", (excd, symb)).fetchone()
+    return r[0] if r else None
+
+
+def topup_minutes(con, appkey, secret, excd, symb, night=False):
+    """1분봉을 DB 의 마지막 봉까지만 거슬러 받아 넣는다 (처음이면 받을 수 있는 만큼). 새로 넣은 개수.
+    마지막 봉이 든 쪽까지 다시 받아 덮어쓴다 — 받을 때 진행 중이던 봉을 고치려고."""
+    if excd == "KRX":
+        last = last_minute(con, excd, symb, False)
+        days = MIN_DAYS if not last else min(MIN_DAYS, (datetime.now() - ts(last)).days + 1)
+        got = k.fetch_kr_bars(appkey, secret, symb, 1, need=days * 391)
+    else:
+        last = last_minute(con, excd, symb, night)
+        src = k.DAY_EXCD[excd] if night else excd
+        got, keyb = {}, ""
+        for _ in range(NIGHT_PAGES if night else MIN_PAGES):
+            page = k.fetch_bars(appkey, secret, src, symb, 1, keyb=keyb)
+            if not page or all(b["time_us"] in got for b in page):
+                break
+            got.update({b["time_us"]: b for b in page})
+            if last and page[0]["time_us"] <= last:
+                break
+            keyb = page[0]["time_us"].replace(" ", "")
+            time.sleep(0.12)
+        got = got.values()
+    return put_bars(con, excd, symb, 1, got)
+
+
 def collect(tickers, nmin, fresh_min=30, grace_min=60):
-    """주간거래 분봉만 받아 쌓는다. 받을 때가 아니거나 이미 최신이면 건너뛴다."""
+    """모든 종목의 1분봉을 이어 쌓고, 주간거래 시간이면 주간거래 nmin 분봉·1분봉도 받아 쌓는다.
+    주간거래 분봉은 받을 때가 아니거나 이미 최신이면 건너뛴다."""
     now = datetime.now(k.NEW_YORK)
     in_session = k.us_day_session(now) or k.us_day_session(now - timedelta(minutes=grace_min))
     log = []
+    appkey, secret = k.load_keys()
+    con = db()
+    mins = []
+    for t in tickers:
+        excd, symb = k.resolve(appkey, secret, t)
+        try:
+            n = topup_minutes(con, appkey, secret, excd, symb)
+            if in_session and excd in k.DAY_EXCD:
+                n += topup_minutes(con, appkey, secret, excd, symb, night=True)
+            con.commit()
+            mins.append(f"{symb} +{n}")
+        except Exception as e:
+            mins.append(f"{symb} 실패 {e}")
+        time.sleep(0.12)
+    log.append("1분봉 " + " ".join(mins))
     if not in_session:
         log.append("주간거래 시간이 아님")
     else:
-        appkey, secret = k.load_keys()
-        con = db()
         cutoff = (now - timedelta(minutes=fresh_min)).strftime("%Y%m%d %H%M%S")
         for t in tickers:
             excd, symb = k.resolve(appkey, secret, t)
@@ -259,7 +311,7 @@ def collect(tickers, nmin, fresh_min=30, grace_min=60):
             con.commit()
             log.append(f"{symb} +{new}")
             time.sleep(0.12)
-        con.close()
+    con.close()
     line = f"{datetime.now():%Y-%m-%d %H:%M} (미국 {now:%m-%d %H:%M}) " + ", ".join(log)
     CACHE.mkdir(exist_ok=True)
     with open(CACHE / "collect.log", "a", encoding="utf-8") as f:
