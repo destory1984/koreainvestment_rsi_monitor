@@ -209,17 +209,20 @@ function gaugeBg() {
                   `${soft(hot)} ${c}% ${d}%, ${hot} ${d}% 100%)`;
 }
 
+// RSI 가 오르면 1, 내리면 -1, 그대로면 0
+function rsiTrend(r) {
+  if (r.rsi == null || r.rsi_prev == null) return 0;
+  const d = r.rsi - r.rsi_prev;
+  return d > TREND_EPS ? 1 : d < -TREND_EPS ? -1 : 0;
+}
+
 function rsiCell(r) {
   if (r.rsi == null) return "-";
   const v = r.rsi;
   const cls = v < cfg.strong_lower ? "cold strong" : v < cfg.lower ? "cold"
             : v > cfg.strong_upper ? "hot strong" : v > cfg.upper ? "hot" : "";
-  let trend = '<span class="trend dim">—</span>';
-  if (r.rsi_prev != null) {
-    const d = v - r.rsi_prev;
-    if (d > TREND_EPS) trend = '<span class="trend up">▲</span>';
-    else if (d < -TREND_EPS) trend = '<span class="trend down">▼</span>';
-  }
+  const trend = ['<span class="trend down">▼</span>', '<span class="trend dim">—</span>',
+                 '<span class="trend up">▲</span>'][rsiTrend(r) + 1];
   return `<span class="rsi"><span class="gauge" style="background:${gaugeBg()}">` +
          `<i style="left:calc(${Math.max(0, Math.min(100, v))}% - 1.5px)"></i></span>` +
          `<span class="${cls}">${fr(v)}</span>${trend}</span>${nightTag(r)}`;
@@ -297,7 +300,8 @@ function cells(r) {
   const krx = r.excd === "KRX";
   const d = krx ? 1 : 4;
   return [
-    krx ? esc(r.name) : r.symb,
+    // 종목 이름도 RSI 추이(▲▼)와 같은 색으로
+    `<span class="${["down", "", "up"][rsiTrend(r) + 1]}">${krx ? esc(r.name) : r.symb}</span>`,
     (r.day ? '<span class="tag" title="미국 주간거래(한국 낮) 체결가">주간</span>' : "") +
       fmtPrice(r.price, krx),
     r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
