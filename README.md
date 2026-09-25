@@ -337,7 +337,7 @@ python kis_tf.py --by 종목 --offline    # 종목마다, 새로 받지 않고
 동전 던지기(50%)여도 흔들릴 만한 폭(±2σ)을 넘은 칸만 굵게 칠한다.
 
 ```bash
-python kis_report.py --open           # replay_cache/report.html 을 만들고 연다 (쌓인 1분봉으로, 몇 분)
+python kis_report.py --open           # replay_cache/report.html 을 만들고 연다 (쌓인 1분봉으로, 13종목 40초쯤)
 ```
 
 웹 서버가 켜져 있으면 http://localhost:8000/report 로도 본다. 시세가 들어 있으니 남에게 올리지 않는다.

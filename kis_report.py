@@ -13,7 +13,7 @@ kis_report.py — 채점 보고서 페이지를 만든다 (replay_cache/report.h
 
 시세를 담은 페이지라 저장소(docs)에 올리지 않는다. replay_cache/ 는 .gitignore.
 
-  python kis_report.py              쌓아 둔 1분봉으로 (새로 받지 않는다, 1~3분)
+  python kis_report.py              쌓아 둔 1분봉으로 (새로 받지 않는다, 13종목 40초쯤)
   python kis_report.py --fetch      1분봉을 이어 받은 뒤
   python kis_report.py --open       다 만들면 브라우저로 열기
 """
