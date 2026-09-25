@@ -17,3 +17,4 @@ kis_alerts.jsonl
 replay_cache/
 kis_web.log
 kis_web.log.old
+NOTES.local.md
