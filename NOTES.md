@@ -138,7 +138,7 @@
   읽는 법을 바꾸면 웹 서버도 다시 켜야 새 문장을 읽는다.
 - **미국 휴장일은 `holidays` 꾸러미로** (09-25 사용자 결정) — 한국투자증권 해외결제일자조회(CTOS5011R)는 미국이 쉬는 날 목록에서 빠지지만
   한 달 남짓만 채워져 있다(담당자가 넣는 듯). 인베스팅닷컴 긁기는 Cloudflare·약관 때문에 안 한다. `exchange_calendars` 는 조기 폐장도 있지만 pandas 가 무겁다.
-- **README 화면 사진은 바꿀 때마다 새 이름** `docs/screen_YYYY-MM-DD.png` (같은 이름은 깃허브 캐시가 옛 것을 보여 준다).
+- **README 화면 사진은 바꿀 때마다 새 이름** `docs/screen_YYYY-MM-DD.png`, 같은 날 또 바꾸면 `_2` 를 붙인다 (같은 이름은 깃허브 캐시가 옛 것을 보여 준다).
 - **예약 실행은 윈도우 작업 스케줄러로** (Claude 예약 작업은 한 번에 세션 하나라 30분마다 돌리기엔 낭비). 창이 뜨지 않게 `.vbs` 또는 `pythonw`.
 - **설정 화면**: 스위치는 ON/OFF 토글, 설명은 ⓘ (PC 는 마우스 올리기, 폰은 눌러 펼치기 — `title` 은 폰에서 안 보인다).
 - **화면**: 글자 기본 10px, 한국식 색(상승 빨강·하락 파랑), 깜박임 없음. 제목 「<작게>한량이 만든</작게> 한국투자증권 RSI Monitor ver 0.2」.
@@ -190,7 +190,7 @@
 | `kis_telegram.py` | 텔레그램 보내기 (`Telegram`, `alert_text`/`signal_text`, `setup`/`test` 명령) |
 | `tests/test_rules.py` | 규칙 시험 (`python -m unittest discover tests`) |
 | `collect_day.vbs` | 작업 스케줄러가 창 없이 `--collect` 를 돌리게 (Git Bash 경유) |
-| `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25.png` | |
+| `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25_2.png` | |
 
 저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`, `kis_token.json`, `kis_exchange.json`, `kis_watchlist.json`(종목 목록),
 `kis_settings.json`(소리·인사·`night`·`sound_sessions`·`quiet`·`mute`), `kis_alerts.jsonl`(알림 기록), `tts_cache/`, `replay_cache/`,
