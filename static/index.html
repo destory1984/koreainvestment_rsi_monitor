@@ -254,7 +254,7 @@ function cells(r) {
   const d = krx ? 1 : 4;
   return [
     krx ? esc(r.name) : r.symb,
-    (r.day ? '<span class="tag" title="미국 주간거래(한국 낮) 체결가. 차트·RSI 는 애프터장 봉까지다">주간</span>' : "") +
+    (r.day ? '<span class="tag" title="미국 주간거래(한국 낮) 체결가">주간</span>' : "") +
       fmtPrice(r.price, krx),
     r.rate == null ? "" : `<span class="${r.rate >= 0 ? "up" : "down"}">${sgn(r.rate, 2)}%</span>`,
     rsiCell(r),

@@ -103,7 +103,7 @@ class Hub:
             return self.books[symb], False
         if len(self.books) >= MAX_TICKERS:
             raise ValueError(f"종목은 {MAX_TICKERS}개까지다.")
-        bars = k.fetch_bars(self.appkey, self.secret, excd, symb, self.nmin)
+        bars = k.fetch_bars_24h(self.appkey, self.secret, excd, symb, self.nmin)
         if not bars:
             raise ValueError(f"{symb}: 분봉이 없다.")
         book = k.Book(excd, symb, bars, self.nmin)
@@ -155,16 +155,13 @@ class Hub:
     def reload_bars(self):
         """끊겼다 붙으면 그 사이 체결을 놓쳤으니 분봉을 새로 받는다."""
         for b in list(self.books.values()):
-            b.bars = k.fetch_bars(self.appkey, self.secret, b.excd, b.symb, self.nmin)
+            b.bars = k.fetch_bars_24h(self.appkey, self.secret, b.excd, b.symb, self.nmin)
             self.signals[b.symb] = ks.signals(b.bars[:-1], self.period)
             time.sleep(0.1)
 
     def on_tick(self, d):
         book = self.books.get(d["SYMB"])
-        if book and d.get("RSYM", "").startswith("R"):   # 주간거래 체결
-            book.on_quote(d)
-            self.dirty.add(book.symb)
-        elif book:
+        if book:
             if book.on_tick(d):
                 self.closed.add(book.symb)
             self.dirty.add(book.symb)

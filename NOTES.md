@@ -7,7 +7,7 @@
 
 - 저장소: https://github.com/destory1984/koreainvestment_rsi_monitor (공개, 옛 이름 `koreainvestment_us_rsi` 는 넘겨 준다)
 - 로컬: `C:\_c\koreainvest`, 브랜치 `main`
-- **push 안 한 커밋 둘**: `9fdea2d Add TODO.md`, `9cff6c8 Add RSI+MACD buy/sell signals` (+ 이 NOTES.md 커밋)
+- 커밋은 기능마다 하고, push 는 가끔 한꺼번에 한다.
 - 웹 서버가 이 세션의 백그라운드로 떠 있을 수 있다 (`python kis_web.py --no-browser`, 포트 8000).
   세션을 지우면 같이 내려갈 수 있으니 필요하면 다시 띄운다.
 - 로컬 TTS 서버(Qwen3-TTS, 포트 47650)는 `C:\_c\tts` 쪽에서 따로 띄운 것이다. 이 저장소가 띄우지 않는다.
@@ -30,6 +30,9 @@
    한국투자증권 REST 를 10초마다, 비트코인은 업비트 공개 시세(KRW-BTC). 코스닥(1001)은 2026-09-25 에 뺐다.
 9. **매수·매도 시그널** (`kis_signal.py`) — webull_rsi_monitor 의 rsi_signal.py 규칙. 09-24 Webull 시그널 15개 중 13개가 같은 봉.
 10. **남이 쓰기 쉽게** — `python kis_rsi.py setup` 으로 키 넣기, `requirements.txt`, 켜면 브라우저 열기, `tts_server.py` 동봉.
+11. **미국 주간거래(한국 낮)** — 미국 동부 20:00~04:00 에는 실시간을 `R`+`BAQ/BAY/BAA` 키로 바꿔 받고(30초마다 시각 확인),
+    체결을 분봉·RSI·알림에 넣는다. Webull 5분봉도 오버나이트 봉을 넣어 RSI 를 낸다 (09-25 MU: 우리 34.70 vs Webull 72.20 으로 확인).
+    켤 때 `BAQ` 분봉 조회도 해 보고 끼워 넣는데, 한국투자증권이 주는지는 아직 확인 못 함 (못 받으면 조용히 정규 쪽만).
 
 ## 확정한 설계 결정
 

@@ -132,6 +132,21 @@ def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120):
     return list(reversed(bars))
 
 
+def fetch_bars_24h(appkey, secret, excd, symb, nmin=5):
+    """정규장·프리·애프터 분봉에 미국 주간거래(한국 낮) 분봉을 시각 순서로 끼워 넣는다.
+    Webull 5분봉도 주간거래 봉을 넣어 RSI 를 낸다. 주간거래 분봉을 못 받으면 정규 쪽만 돌려준다."""
+    bars = fetch_bars(appkey, secret, excd, symb, nmin)
+    if excd not in DAY_EXCD:
+        return bars
+    try:
+        day = fetch_bars(appkey, secret, DAY_EXCD[excd], symb, nmin)
+    except Exception:
+        return bars
+    merged = {b["time_us"]: b for b in day}
+    merged.update({b["time_us"]: b for b in bars})   # 겹치면 정규 쪽
+    return [merged[t] for t in sorted(merged)]
+
+
 def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
     """국내주식 1분봉(FHKST03010230, 한 번에 120개)을 거슬러 받아 nmin 분봉으로 묶는다."""
     token = get_token(appkey, secret)
@@ -400,11 +415,6 @@ class Book:
             return (KR_TR, self.symb)
         return f"R{DAY_EXCD[self.excd]}{self.symb}" if day else f"D{self.excd}{self.symb}"
 
-    def on_quote(self, d):
-        """주간거래 체결: 가격·등락·시각만 고친다. 거래가 뜸해 RSI 가 흔들리니 분봉에는 넣지 않는다."""
-        self.price, self.rate, self.us_time = float(d["LAST"]), float(d["RATE"]), d["XHMS"]
-        self.day_quote = True
-
     def on_tick(self, d):
         """체결 하나를 반영한다. 새 봉이 생기면 True."""
         price = float(d["LAST"])
@@ -419,7 +429,7 @@ class Book:
         b["close"], b["high"], b["low"] = price, max(b["high"], price), min(b["low"], price)
         b["volume"] += int(d["EVOL"] or 0)
         self.price, self.rate, self.us_time = price, float(d["RATE"]), d["XHMS"]
-        self.day_quote = False
+        self.day_quote = d.get("RSYM", "").startswith("R")   # 주간거래 체결 ('RBAQTSLA')
         return new
 
     def series(self, period=14):
