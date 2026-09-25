@@ -38,6 +38,8 @@
   #markets span.m { display: inline-flex; gap: 5px; align-items: baseline; }
   #markets .n { color: var(--muted); }
   #markets .v { font-weight: 600; }
+  #markets .sess { color: var(--muted); }
+  #markets .sess.open { color: var(--pos); font-weight: 600; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .scroll { overflow-x: auto; }
   form.add { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
@@ -569,8 +571,56 @@ function setMarkers() {
   charts.s.candle.setMarkers([...band, ...sig].sort((a, b) => a.time - b.time));
 }
 
+// ── 장 상태 ─────────────────────────────────────────────────
+// 그 도시의 요일(0=일)과 자정부터 분
+function clock(tz) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { wd: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday), min: +p.hour * 60 + +p.minute };
+}
+
+// [이름, 끝나는 분(자정부터. 다음 날로 넘어가면 1440 보다 크다), 열려 있나]. 휴장일은 따지지 않는다
+// 미국은 동부 시각. 주간거래(한국 낮)는 일~목요일 20:00 부터 다음 날 04:00 까지 (서버 us_day_session 과 같다)
+function usSession() {
+  const { wd, min } = clock("America/New_York");
+  const H = h => h * 60;
+  if (wd === 6 || (wd === 0 && min < H(20))) return ["휴장", 0, false];
+  if (min < H(4)) return wd === 0 ? ["휴장", 0, false] : ["주간거래", H(4), true];
+  if (min >= H(20)) return wd === 5 ? ["휴장", 0, false] : ["주간거래", H(28), true];
+  if (wd === 0) return ["휴장", 0, false];
+  if (min < H(9.5)) return ["프리장", H(9.5), true];
+  if (min < H(16)) return ["정규장", H(16), true];
+  return ["애프터", H(20), true];
+}
+
+// 한국은 서울 시각. 정규장 09:00~15:30, 그 앞뒤 시간외
+function krSession() {
+  const { wd, min } = clock("Asia/Seoul");
+  const H = h => h * 60;
+  if (wd === 0 || wd === 6) return ["휴장", 0, false];
+  if (min >= H(8.5) && min < H(9)) return ["장전 시간외", H(9), true];
+  if (min >= H(9) && min < H(15.5)) return ["정규장", H(15.5), true];
+  if (min >= H(15.5) && min < H(18)) return ["장후 시간외", H(18), true];
+  return ["장 마감", 0, false];
+}
+
+function left(m) {
+  return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 남음` : `${m}분 남음`;
+}
+
+function sessionsHtml() {
+  const one = (flag, [name, end, open], min) =>
+    `<span class="m"><span class="n">${flag}</span><span class="sess${open ? " open" : ""}">${name}</span>` +
+    (open ? `<span class="dim">${left(end - min)}</span>` : "") + "</span>";
+  return one("미국", usSession(), clock("America/New_York").min) + one("한국", krSession(), clock("Asia/Seoul").min);
+}
+
+let lastMarkets = [];
+setInterval(() => renderMarkets(lastMarkets), 30000);   // 남은 시간을 새로 쓴다
+
 function renderMarkets(list) {
-  $("#markets").innerHTML = (list || []).map(m => {
+  lastMarkets = list || [];
+  $("#markets").innerHTML = sessionsHtml() + (list || []).map(m => {
     if (m.price == null) return `<span class="m"><span class="n">${esc(m.name)}</span><span class="dim">-</span></span>`;
     const digits = m.kind === "BTC" ? 0 : 2;
     const v = m.price.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
