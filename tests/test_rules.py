@@ -541,6 +541,32 @@ class KrBarsTest(unittest.TestCase):
         self.assertEqual(k.load_kr_market(temp_path(".json")), "krx")   # 파일이 없으면 KRX
 
 
+# ── 목소리 고르기 ──────────────────────────────────────────────
+class VoiceTest(unittest.TestCase):
+    def setUp(self):
+        self.v = al.Voice(Path(tempfile.mkdtemp()))
+        self.v.path("가", "local").write_bytes(b"wav")                    # 로컬 녹음만 있다
+        self.v._local_save = mock.Mock(side_effect=RuntimeError("서버 없음"))
+
+    def test_local_by_default(self):
+        self.v._edge_save = mock.Mock()
+        self.assertEqual(self.v.make("가").suffix, ".wav")
+        self.v._edge_save.assert_not_called()
+
+    def test_edge_first_when_chosen(self):
+        self.v.prefer = "edge"
+        self.assertFalse(self.v.cached("가"))                              # Edge 파일이 없으니 미리 만들 대상
+        self.v._edge_save = lambda text, tmp: tmp.write_bytes(b"mp3")
+        self.assertEqual(self.v.make("가").suffix, ".mp3")
+        self.assertTrue(self.v.cached("가"))
+        self.assertEqual(self.v.make("가", prefer="local").suffix, ".wav")  # 인사처럼 이 문장만 로컬로
+
+    def test_edge_fails_falls_back_to_local(self):
+        self.v.prefer = "edge"
+        self.v._edge_save = mock.Mock(side_effect=RuntimeError("인터넷 없음"))
+        self.assertEqual(self.v.make("가").suffix, ".wav")
+
+
 # ── 텔레그램 ───────────────────────────────────────────────────
 class TelegramTest(unittest.TestCase):
     def test_texts(self):

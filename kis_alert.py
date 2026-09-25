@@ -285,6 +285,7 @@ class Voice:
         self.q = queue.Queue()
         self.last_path = ""       # 마지막으로 읽은 경로 ("local" / "sapi" / "powershell" / "")
         self.last_error = ""
+        self.prefer = "local"     # 알림을 읽을 목소리: "local"(로컬 TTS 녹음 먼저) / "edge"(Edge 먼저, 없으면 만든다)
         threading.Thread(target=self._worker, daemon=True).start()
 
     # 캐시 — rsi_monitor.tts_path 와 같은 열쇠
@@ -298,16 +299,20 @@ class Voice:
         key = hashlib.blake2b(f"{lang}|{sig}|{text}".encode("utf-8"), digest_size=8).hexdigest()
         return self.dir / f"{lang}_{key}.{ext}"
 
-    def cached_path(self, text):
-        """만들어 둔 파일. 로컬 목소리를 앞세운다. 없으면 None."""
-        for engine in ("local", "edge"):
+    def order(self, prefer=None):
+        return ("edge", "local") if (prefer or self.prefer) == "edge" else ("local", "edge")
+
+    def cached_path(self, text, only=None, prefer=None):
+        """만들어 둔 파일. prefer(없으면 self.prefer) 목소리를 앞세운다. only 면 그 목소리만. 없으면 None."""
+        for engine in (only,) if only else self.order(prefer):
             p = self.path(text, engine)
             if p.is_file() and p.stat().st_size > 0:
                 return p
         return None
 
     def cached(self, text):
-        return self.cached_path(text) is not None
+        """고른 목소리(prefer)로 만들어 둔 것이 있나. Edge 를 골랐으면 Edge 파일만 센다 — 없으면 미리 만든다."""
+        return self.cached_path(text, only="edge" if self.prefer == "edge" else None) is not None
 
     @staticmethod
     def edge_ok():
@@ -319,28 +324,48 @@ class Voice:
 
     def engine(self):
         """지금 새 문장을 만들 통로. 'local' / 'edge' / '' (못 만듦 → 윈도우 음성)."""
+        if self.prefer == "edge" and self.edge_ok():
+            return "edge"
         return "local" if self.server_up() else "edge" if self.edge_ok() else ""
 
-    def make(self, text):
-        """캐시에 있으면 그것, 없으면 로컬 → Edge 순서로 만들어 둔다."""
-        p = self.cached_path(text)
+    def make(self, text, prefer=None):
+        """캐시에 있으면 그것, 없으면 만들어 둔다. 기본은 로컬 → Edge. Edge 를 고르면 Edge 파일이 없을 때 먼저 만들어 보고,
+        안 되면 로컬 녹음을 쓴다."""
+        order = self.order(prefer)
+        p = self.cached_path(text, only=order[0])
+        if p:
+            return p
+        if order[0] == "edge":
+            try:
+                return self._save(text, "edge")
+            except Exception:
+                pass
+        p = self.cached_path(text, prefer=prefer)
         if p:
             return p
         errors = []
-        for engine, save in (("local", self._local_save), ("edge", self._edge_save)):
-            p = self.path(text, engine)
-            tmp = p.with_name(p.name + ".part")   # 받다 끊긴 파일이 캐시에 남지 않게
+        for engine in order:
             try:
-                self.dir.mkdir(parents=True, exist_ok=True)
-                save(text, tmp)
-                if not tmp.is_file() or tmp.stat().st_size == 0:
-                    raise RuntimeError("받은 소리가 비었다")
-                os.replace(tmp, p)
-                return p
+                return self._save(text, engine)
             except Exception as e:
-                tmp.unlink(missing_ok=True)
                 errors.append(f"{engine}: {e}")
         raise RuntimeError(" / ".join(errors))
+
+    def _save(self, text, engine):
+        """engine 목소리로 만들어 캐시에 둔다. 못 만들면 예외."""
+        save = self._local_save if engine == "local" else self._edge_save
+        p = self.path(text, engine)
+        tmp = p.with_name(p.name + ".part")   # 받다 끊긴 파일이 캐시에 남지 않게
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            save(text, tmp)
+            if not tmp.is_file() or tmp.stat().st_size == 0:
+                raise RuntimeError("받은 소리가 비었다")
+            os.replace(tmp, p)
+            return p
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def _edge_save(self, text, tmp):
         import asyncio
@@ -391,25 +416,25 @@ class Voice:
         return True
 
     # 읽기
-    def say(self, text, tone=""):
-        """줄에 세운다. tone 이 'short'/'full' 이면 말머리 소리를 먼저 낸다."""
-        self.q.put((text, tone))
+    def say(self, text, tone="", prefer=None):
+        """줄에 세운다. tone 이 'short'/'full' 이면 말머리 소리를 먼저 낸다. prefer 는 이 문장만 목소리를 정할 때."""
+        self.q.put((text, tone, prefer))
 
     def _worker(self):
         while True:
-            text, tone = self.q.get()
+            text, tone, prefer = self.q.get()
             try:
                 if tone:
                     play_chime(tone)
                 if text:
-                    self.last_path = self._speak(text)
+                    self.last_path = self._speak(text, prefer)
             except Exception as e:
                 self.last_error = str(e)
 
-    def _speak(self, text):
+    def _speak(self, text, prefer=None):
         self.last_error = ""
         try:
-            p = self.make(text)
+            p = self.make(text, prefer)
             play_wav(p)
             return "edge" if p.suffix == ".mp3" else "local"
         except Exception as e:
@@ -457,7 +482,7 @@ class Voice:
             first = True
         text = first_text if first else again_text
         if text:
-            self.say(text)
+            self.say(text, prefer="local")   # 인사는 녹음해 둔 목소리 그대로 (알림 목소리 설정과 상관없이)
         if first:
             try:
                 self.dir.mkdir(parents=True, exist_ok=True)

@@ -69,6 +69,8 @@ class Hub:
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
         self.settings.setdefault("lines", {})        # 종목 -> [강한 아래, 아래, 위, 강한 위]. 없으면 기본 30·35·65·70
+        self.settings.setdefault("tts_engine", "local")  # 알림 목소리: "local"(로컬 TTS 녹음) / "edge"(Edge 음성)
+        self.voice.prefer = self.settings["tts_engine"]
         self.settings.setdefault("kr_market", "krx")  # 국내: "krx"(정규장) / "unified"(넥스트레이드 포함 08:00~20:00)
         k.set_kr_market(self.settings["kr_market"])  # 켤 때 한 번. 바꾸면 다시 켜야 한다
         self.tg = tg.Telegram()
@@ -113,7 +115,8 @@ class Hub:
                 self.settings.get("greeting_again", al.TTS_GREETING_AGAIN))
 
     def prefetch(self, books):
-        texts = [t for t in self.greetings() if t]
+        # 인사는 늘 녹음해 둔 목소리로 읽으니 Edge 를 골랐어도 Edge 로 만들지 않는다
+        texts = [t for t in self.greetings() if t] if self.voice.prefer == "local" else []
         for b in books:
             texts += al.phrases(b.name, b.symb, self.lines(b.symb))
         missing = sum(not self.voice.cached(t) for t in texts)
@@ -735,6 +738,7 @@ class Hub:
                 "session_names": SOUND_SESSIONS, "holidays": self.holidays(),
                 "telegram": {"ready": self.tg.ready, "on": self.settings["telegram"], "error": self.tg.last_error},
                 "kr_market": {"want": self.settings["kr_market"], "now": k.KR_MARKET},
+                "tts_engine": self.settings["tts_engine"],
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -938,6 +942,16 @@ def api_telegram(on: bool = Body(..., embed=True)):
     hub.settings["telegram"] = bool(on)
     hub.save_settings()
     return {"on": hub.settings["telegram"], "ready": hub.tg.ready}
+
+
+@app.post("/api/tts-engine")
+def api_tts_engine(edge: bool = Body(..., embed=True)):
+    """알림·시그널을 읽을 목소리. 바로 적용되고, Edge 로 바꾸면 없는 문장을 뒤에서 만든다 (시작 인사는 그대로)."""
+    hub.settings["tts_engine"] = "edge" if edge else "local"
+    hub.voice.prefer = hub.settings["tts_engine"]
+    hub.save_settings()
+    hub.prefetch(list(hub.books.values()))
+    return {"tts_engine": hub.settings["tts_engine"]}
 
 
 @app.post("/api/kr-market")
