@@ -57,6 +57,7 @@ class Hub:
         self.markets = []         # 한 줄 띠: [{"name", "price", "rate"}]
         self.ws = None            # 한국투자증권 실시간 연결 (열려 있을 때만)
         self.approval_key = None
+        self.day = k.us_day_session()   # 미국 주간거래 시간이면 해외 종목을 R 쪽으로 구독한다
         self.lock = asyncio.Lock()
 
     # ── 종목 목록 ─────────────────────────────────────────────
@@ -119,7 +120,7 @@ class Hub:
                 return book
             self.save()
             if self.ws:
-                await k.subscribe(self.ws, self.approval_key, book.key)
+                await k.subscribe(self.ws, self.approval_key, book.key_for(self.day))
         self.prefetch([book])
         await self.broadcast({"type": "add", "row": self.row(book)})
         return book
@@ -135,10 +136,20 @@ class Hub:
             self.dirty.discard(symb)
             if self.ws:
                 try:
-                    await k.subscribe(self.ws, self.approval_key, book.key, on=False)
+                    await k.subscribe(self.ws, self.approval_key, book.key_for(self.day), on=False)
                 except Exception:
                     pass
         await self.broadcast({"type": "remove", "symb": symb})
+
+    async def reorder(self, symbs):
+        """적은 차례대로 줄을 세운다. 목록에 빠진 종목은 원래 차례대로 뒤에 붙인다."""
+        async with self.lock:
+            order = [s for s in dict.fromkeys(symbs) if s in self.books]
+            order += [s for s in self.books if s not in order]
+            self.books = {s: self.books[s] for s in order}
+            self.save()
+        await self.broadcast({"type": "order", "symbs": order})
+        return order
 
     # ── 한국투자증권 쪽 ────────────────────────────────────────
     def reload_bars(self):
@@ -150,7 +161,10 @@ class Hub:
 
     def on_tick(self, d):
         book = self.books.get(d["SYMB"])
-        if book:
+        if book and d.get("RSYM", "").startswith("R"):   # 주간거래 체결
+            book.on_quote(d)
+            self.dirty.add(book.symb)
+        elif book:
             if book.on_tick(d):
                 self.closed.add(book.symb)
             self.dirty.add(book.symb)
@@ -170,7 +184,7 @@ class Hub:
                 first = False
                 self.set_status("연결 중")
                 self.approval_key = await asyncio.to_thread(k.get_approval_key, self.appkey, self.secret)
-                keys = [b.key for b in self.books.values()]
+                keys = [b.key_for(self.day) for b in self.books.values()]
                 await k.live(self.approval_key, keys, self.on_tick, self.on_open)
                 self.ws = None
                 self.set_status("연결 끊김 — 5초 뒤 다시")
@@ -185,6 +199,25 @@ class Hub:
                 self.ws = None
                 self.set_status(f"연결 끊김 ({type(e).__name__}) — 5초 뒤 다시")
                 await asyncio.sleep(5)
+
+    async def session_loop(self):
+        """미국 주간거래가 열리고 닫힐 때 해외 종목 구독을 D↔R 로 바꿔 건다."""
+        while True:
+            await asyncio.sleep(30)
+            day = k.us_day_session()
+            if day == self.day:
+                continue
+            async with self.lock:
+                self.day = day
+                if self.ws:
+                    try:
+                        for b in self.books.values():
+                            if b.excd != "KRX":
+                                await k.subscribe(self.ws, self.approval_key, b.key_for(not day), on=False)
+                                await k.subscribe(self.ws, self.approval_key, b.key_for(day))
+                    except Exception:
+                        pass   # 끊겼으면 다시 붙을 때 새 키로 건다
+            print("미국 " + ("주간거래로 바꿔 받는다" if day else "정규장·프리·애프터로 바꿔 받는다"), flush=True)
 
     # ── 지수 띠 ───────────────────────────────────────────────
     def fetch_markets(self):
@@ -398,7 +431,7 @@ hub: Hub = None
 async def lifespan(app):
     await asyncio.to_thread(hub.load)
     tasks = [asyncio.create_task(hub.kis_loop()), asyncio.create_task(hub.push_loop()),
-             asyncio.create_task(hub.markets_loop())]
+             asyncio.create_task(hub.markets_loop()), asyncio.create_task(hub.session_loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -441,6 +474,11 @@ async def api_remove(symb: str):
     except KeyError:
         raise HTTPException(404, symb)
     return {"ok": True}
+
+
+@app.put("/api/order")
+async def api_order(symbs: list[str] = Body(..., embed=True)):
+    return {"symbs": await hub.reorder([s.upper() for s in symbs])}
 
 
 @app.post("/api/sound")

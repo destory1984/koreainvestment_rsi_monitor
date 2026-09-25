@@ -10,6 +10,7 @@
     --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6eb; --text: #1b1f24; --muted: #6b7380;
     --up: #d6453d; --down: #2f6fdf; --pos: #1f9d55; --neg: #d6453d;
     --hot: #d6453d; --cold: #2f6fdf; --sel: #eef3ff; --input: #ffffff;
+    --fs: 10px;   /* 글자 크기. 「가-」「가+」로 바꾼다 */
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -20,12 +21,12 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 10px/1.4 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+         font: var(--fs)/1.4 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
   header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
-  h1 { font-size: 12px; margin: 0; font-weight: 700; }
-  h1 .by { font-size: 9px; font-weight: 400; color: var(--muted); }
-  .sub { color: var(--muted); font-size: 10px; }
-  .pill { font-size: 10px; padding: 2px 8px; border-radius: 99px;
+  h1 { font-size: calc(var(--fs) * 1.2); margin: 0; font-weight: 700; }
+  h1 .by { font-size: calc(var(--fs) * 0.9); font-weight: 400; color: var(--muted); }
+  .sub { color: var(--muted); font-size: var(--fs); }
+  .pill { font-size: var(--fs); padding: 2px 8px; border-radius: 99px;
           background: var(--panel); border: 1px solid var(--line); color: var(--muted);
           max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.ok { color: var(--pos); border-color: var(--pos); }
@@ -41,41 +42,59 @@
   .scroll { overflow-x: auto; }
   form.add { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
   form.add input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line);
-                   border-radius: 5px; padding: 3px 6px; width: 150px; }
+                   border-radius: 5px; padding: 3px 6px; width: calc(var(--fs) * 15); }
   form.add button { font: inherit; border: 1px solid var(--line); background: var(--sel); color: var(--text);
                     border-radius: 5px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
   form.add button:disabled { opacity: .5; cursor: default; }
   #msg { color: var(--muted); } #msg.err { color: var(--neg); }
+  form.add button#colbtn { margin-left: auto; background: var(--panel); }
+  .menu { position: fixed; z-index: 10; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+          padding: 6px 4px; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: grid; min-width: 110px; }
+  .menu[hidden] { display: none; }
+  .menu label { display: flex; gap: 6px; align-items: center; padding: 3px 8px; border-radius: 4px; cursor: pointer; }
+  .menu label:hover { background: var(--sel); }
+  .menu input { margin: 0; }
+  .menu .mrow { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 3px 8px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { padding: 4px 8px; text-align: right; white-space: nowrap; }
-  th { font-size: 10px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
-  th:first-child, td:first-child { text-align: left; }
+  th { font-size: var(--fs); color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child, th:nth-child(2), td.sym { text-align: left; }
   tbody tr { border-bottom: 1px solid var(--line); cursor: pointer; }
   tbody tr:last-child { border-bottom: 0; }
   tbody tr:hover { background: var(--sel); }
   tbody tr.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--down); }
-  td.sym { font-weight: 700; width: 74px; max-width: 74px; overflow: hidden; text-overflow: ellipsis; }
+  td.sym { font-weight: 700; width: calc(var(--fs) * 7.4); max-width: calc(var(--fs) * 7.4); overflow: hidden; text-overflow: ellipsis; }
+  td.grip { width: 1%; padding: 0 0 0 4px; color: var(--muted); cursor: grab; touch-action: none;
+            user-select: none; }
+  td.grip span { visibility: hidden; display: inline-flex; padding: 2px 1px; }
+  tbody tr:hover td.grip span, tbody tr.sel td.grip span, tbody tr.dragging td.grip span { visibility: visible; }
+  tbody tr.dragging { background: var(--sel); opacity: .7; }
+  tbody.sorting, tbody.sorting td.grip { cursor: grabbing; }
   td.del { width: 1%; padding: 0 4px; }
   td.del button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer;
                   padding: 2px 5px; border-radius: 4px; visibility: hidden; display: inline-flex; }
   tbody tr:hover td.del button, tbody tr.sel td.del button { visibility: visible; }
   td.del button:hover { color: var(--neg); background: var(--bg); }
-  @media (hover: none) { td.del button { visibility: visible; } }
+  @media (hover: none) { td.del button, td.grip span { visibility: visible; } }
   .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
   .rsi { display: inline-flex; align-items: center; gap: 6px; }
   .gauge { position: relative; width: 56px; height: 5px; border-radius: 3px; }
   .gauge i { position: absolute; top: -3px; width: 3px; height: 11px; border-radius: 2px; background: var(--text);
              box-shadow: 0 0 0 1px var(--panel); }
-  .trend { display: inline-block; width: 10px; text-align: center; font-size: 9px; }
+  .trend { display: inline-block; width: calc(var(--fs) * 1); text-align: center; font-size: calc(var(--fs) * 0.9); }
   .hot { color: var(--hot); } .cold { color: var(--cold); }
   .hot.strong, .cold.strong { font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
   .hbtn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
           border-radius: 99px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
   .hbtn.off { color: var(--muted); }
+  .fsz { display: inline-flex; }
+  .fsz .hbtn:first-child { border-radius: 99px 0 0 99px; border-right: 0; }
+  .fsz .hbtn:last-child { border-radius: 0 99px 99px 0; }
+  .hbtn:disabled { opacity: .4; cursor: default; }
   .hbtn:hover { background: var(--sel); }
-  #events { list-style: none; margin: 0; padding: 3px 0; max-height: calc(3 * 18px + 6px); overflow-y: auto; }
-  #events li { height: 18px; align-items: center; }
+  #events { list-style: none; margin: 0; padding: 3px 0; max-height: calc(3 * var(--fs) * 1.8 + 6px); overflow-y: auto; }
+  #events li { height: calc(var(--fs) * 1.8); align-items: center; }
   #events li { display: flex; gap: 8px; padding: 2px 10px; white-space: nowrap; }
   #events li .t { color: var(--muted); font-variant-numeric: tabular-nums; }
   #events li.sup { color: var(--muted); }
@@ -86,9 +105,9 @@
   td.last { color: var(--muted); }
   td.last b { font-weight: 600; }
   .charthead { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 2px; }
-  .charthead h2 { margin: 0; font-size: 11px; }
+  .charthead h2 { margin: 0; font-size: calc(var(--fs) * 1.1); }
   .pane { position: relative; }
-  .pane span { position: absolute; left: 8px; top: 4px; z-index: 2; font-size: 9px; color: var(--muted); }
+  .pane span { position: absolute; left: 8px; top: 4px; z-index: 2; font-size: calc(var(--fs) * 0.9); color: var(--muted); }
   #c-price { height: 260px; } #c-rsi { height: 110px; } #c-macd { height: 130px; }
   @media (max-width: 600px) {
     #c-price { height: 200px; } #c-rsi { height: 90px; } #c-macd { height: 100px; }
@@ -99,13 +118,17 @@
 <body>
 <header>
   <h1><small class="by">한량이 만든</small> 한국투자증권 RSI Monitor ver 0.1</h1>
-  <span class="sub" id="sub"></span>
   <span style="margin-left:auto"></span>
-  <button class="hbtn" id="sound" title="알림 소리 켜고 끄기">🔊 소리</button>
-  <button class="hbtn" id="sigsound" title="매수·매도 시그널도 말로 알릴지">🔊 시그널</button>
-  <button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 시험</button>
+  <span class="fsz"><button class="hbtn" id="fsdown" title="글자 작게" aria-label="글자 작게">가-</button><button class="hbtn" id="fsup" title="글자 크게" aria-label="글자 크게">가+</button></span>
+  <button class="hbtn" id="setbtn" title="소리 설정" aria-expanded="false">⚙ 설정</button>
   <span class="pill" id="status">연결 중</span>
 </header>
+<div class="menu" id="setmenu" hidden>
+  <div class="mrow"><span>지표</span><span class="sub" id="sub"></span></div>
+  <div class="mrow"><span>알림 소리</span><button class="hbtn" id="sound" title="알림 소리 켜고 끄기"></button></div>
+  <div class="mrow"><span>시그널 소리</span><button class="hbtn" id="sigsound" title="매수·매도 시그널도 말로 알릴지"></button></div>
+  <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
+</div>
 <div id="markets"></div>
 <main>
   <div class="card">
@@ -113,10 +136,13 @@
       <input id="ticker" placeholder="TSLA · NYS:BE · 005930" autocomplete="off" spellcheck="false">
       <button id="addbtn">추가</button>
       <span id="msg" class="sub">미국은 티커, 국내는 종목코드 여섯 자리</span>
+      <button type="button" id="colbtn" title="표에 보일 칸 고르기" aria-expanded="false">칸 ▾</button>
     </form>
+    <div class="menu" id="colmenu" hidden></div>
+    <style id="colstyle"></style>
     <div class="scroll">
       <table>
-        <thead><tr><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>구간</th><th>MACD</th><th>시그널</th><th>히스토</th><th>매수/매도</th><th>최근 알림</th><th>현지시각</th><th></th></tr></thead>
+        <thead><tr><th></th><th>종목</th><th>가격</th><th>등락</th><th>RSI</th><th>구간</th><th>MACD</th><th>시그널</th><th>히스토</th><th>매수/매도</th><th>최근 알림</th><th>현지시각</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -230,6 +256,8 @@ function cells(r) {
   ];
 }
 
+const GRIP = '<span aria-hidden="true">⋮⋮</span>';
+
 const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
   'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/>' +
   '<path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
@@ -242,30 +270,69 @@ function renderRow(r) {
     tr = document.createElement("tr");
     tr.id = "r-" + r.symb;
     tr.title = r.excd === "KRX" ? `${r.name} · ${r.symb}` : `${r.excd}:${r.symb}`;
-    tr.innerHTML = c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 9 ? "last" : ""}">${x}</td>`).join("") +
+    tr.innerHTML = `<td class="grip" title="끌어서 차례 바꾸기">${GRIP}</td>` + c.map((x, i) => `<td class="${i === 0 ? "sym" : i === 9 ? "last" : ""}">${x}</td>`).join("") +
                    `<td class="del"><button title="빼기" aria-label="종목 빼기">${TRASH}</button></td>`;
     tr.onclick = () => select(r.symb);
+    dragRow(tr, tr.querySelector(".grip"));
     tr.querySelector(".del button").onclick = e => { e.stopPropagation(); removeTicker(r.symb); };
     $("#rows").appendChild(tr);
     if (r.symb === selected) tr.classList.add("sel");
   } else {
-    c.forEach((x, i) => { const td = tr.children[i]; if (td.innerHTML !== x) td.innerHTML = x; });
+    c.forEach((x, i) => { const td = tr.children[i + 1]; if (td.innerHTML !== x) td.innerHTML = x; });
   }
   rows[r.symb] = r;
+}
+
+// 손잡이(⋮⋮)를 끌어 줄 차례를 바꾼다. 마우스와 손가락 모두 되게 pointer 이벤트로 한다.
+// 줄을 옮기면 pointer capture 가 풀리므로 움직임은 window 에서 받는다
+function dragRow(tr, grip) {
+  grip.onclick = e => e.stopPropagation();
+  grip.onpointerdown = e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const before = order().join();
+    tr.classList.add("dragging");
+    $("#rows").classList.add("sorting");
+    const move = e => {
+      const others = [...$("#rows").children].filter(x => x !== tr);
+      const next = others.find(x => { const b = x.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
+      if (next !== tr.nextElementSibling) $("#rows").insertBefore(tr, next || null);
+    };
+    const up = async () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      tr.classList.remove("dragging");
+      $("#rows").classList.remove("sorting");
+      if (order().join() === before) return;
+      const res = await fetch("/api/order", { method: "PUT", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ symbs: order() }) }).catch(() => null);
+      if (!res || !res.ok) { setMsg("차례를 저장하지 못했다", true); loadState(); }
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  };
+}
+
+const order = () => [...$("#rows").children].map(tr => tr.id.slice(2));
+
+function applyOrder(symbs) {
+  symbs.forEach(s => { const tr = document.getElementById("r-" + s); if (tr) $("#rows").appendChild(tr); });
 }
 
 function dropRow(symb) {
   document.getElementById("r-" + symb)?.remove();
   delete rows[symb];
   if (selected === symb) {
-    const first = Object.keys(rows)[0];
+    const first = $("#rows tr")?.id.slice(2);
     if (first) select(first); else clearChart();
   }
 }
 
 function makeCharts() {
   const base = {
-    layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: 10 },
+    layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: fontSize },
     grid: { vertLines: { color: css("--line") }, horzLines: { color: css("--line") } },
     rightPriceScale: { borderColor: css("--line"), minimumWidth: 70 },
     timeScale: { borderColor: css("--line"), timeVisible: true, secondsVisible: false },
@@ -442,13 +509,16 @@ function renderMarkets(list) {
 
 function setSound(on) {
   cfg.sound = on;
-  $("#sound").textContent = on ? "🔊 소리" : "🔇 소리 꺼짐";
+  $("#sound").textContent = on ? "🔊 켜짐" : "🔇 꺼짐";
   $("#sound").classList.toggle("off", !on);
+  // 설정 안에 숨어 있어도 소리가 꺼진 줄은 알 수 있게
+  $("#setbtn").textContent = on ? "⚙ 설정" : "⚙ 설정 🔇";
+  $("#setbtn").title = on ? "소리 설정" : "소리 설정 — 알림 소리가 꺼져 있다";
 }
 
 function setSigSound(on) {
   cfg.signal_sound = on;
-  $("#sigsound").textContent = on ? "🔊 시그널" : "🔇 시그널";
+  $("#sigsound").textContent = on ? "🔊 켜짐" : "🔇 꺼짐";
   $("#sigsound").classList.toggle("off", !on);
 }
 
@@ -471,6 +541,76 @@ $("#soundtest").onclick = async () => {
   setMsg(`시험: "${j.text}" — ` + (j.cached ? "만들어 둔 소리" : j.engine === "local" ? "로컬 TTS 로 만드는 중"
                  : j.engine === "edge" ? "Edge 음성으로 만드는 중" : "윈도우 음성"));
 };
+
+// 표에 보일 칸을 고른다. 고른 것은 이 브라우저에만 기억한다 (PC 와 휴대폰을 따로 맞출 수 있게)
+// 손잡이·종목·휴지통 칸은 늘 보인다
+const COLS = [...document.querySelectorAll("thead th")].map((th, i) => ({ n: i + 1, name: th.textContent }))
+  .filter(c => c.name && c.name !== "종목");
+let hiddenCols = new Set();
+try { hiddenCols = new Set(JSON.parse(localStorage.getItem("hidecols") || "[]")); } catch (e) {}
+
+function applyCols() {
+  $("#colstyle").textContent = COLS.filter(c => hiddenCols.has(c.name))
+    .map(c => `table th:nth-child(${c.n}), table td:nth-child(${c.n}) { display: none; }`).join(" ");
+  $("#colbtn").textContent = hiddenCols.size ? `칸 ${COLS.length - hiddenCols.size}/${COLS.length} ▾` : "칸 ▾";
+}
+
+$("#colmenu").innerHTML = COLS.map(c =>
+  `<label><input type="checkbox" value="${esc(c.name)}">${esc(c.name)}</label>`).join("");
+$("#colmenu").onchange = e => {
+  e.target.checked ? hiddenCols.delete(e.target.value) : hiddenCols.add(e.target.value);
+  try { localStorage.setItem("hidecols", JSON.stringify([...hiddenCols])); } catch (e) {}
+  applyCols();
+};
+
+applyCols();
+
+// 버튼 아래에 펼쳐지는 메뉴 (칸 고르기, 설정). 바깥을 누르거나 Esc·스크롤이면 닫는다
+const menus = [];
+function popMenu(btn, menu, onOpen) {
+  const show = open => {
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", open);
+    if (!open) return;
+    onOpen?.();
+    const b = btn.getBoundingClientRect();
+    menu.style.top = `${b.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, Math.min(b.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  };
+  btn.onclick = e => {
+    e.stopPropagation();
+    const open = menu.hidden;
+    menus.forEach(m => m(false));
+    show(open);
+  };
+  menus.push(show);
+  document.addEventListener("click", e => { if (!menu.contains(e.target)) show(false); });
+}
+popMenu($("#colbtn"), $("#colmenu"),
+        () => $("#colmenu").querySelectorAll("input").forEach(x => x.checked = !hiddenCols.has(x.value)));
+popMenu($("#setbtn"), $("#setmenu"));
+document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => m(false)); });
+addEventListener("scroll", e => { if (!e.target.closest?.(".menu")) menus.forEach(m => m(false)); }, true);
+addEventListener("resize", () => menus.forEach(m => m(false)));
+
+// 글자 크기. 이 브라우저에만 기억한다
+const FS_MIN = 9, FS_MAX = 18;
+let fontSize = 10;
+try { fontSize = Math.min(FS_MAX, Math.max(FS_MIN, +localStorage.getItem("fs") || 10)); } catch (e) {}
+
+function setFontSize(n) {
+  fontSize = Math.min(FS_MAX, Math.max(FS_MIN, n));
+  document.documentElement.style.setProperty("--fs", fontSize + "px");
+  $("#fsdown").disabled = fontSize <= FS_MIN;
+  $("#fsup").disabled = fontSize >= FS_MAX;
+  $("#fsdown").title = `글자 작게 · 지금 ${fontSize}px`;
+  $("#fsup").title = `글자 크게 · 지금 ${fontSize}px`;
+  if (charts) charts.all.forEach(c => c.applyOptions({ layout: { fontSize } }));
+  try { localStorage.setItem("fs", fontSize); } catch (e) {}
+}
+$("#fsdown").onclick = () => setFontSize(fontSize - 1);
+$("#fsup").onclick = () => setFontSize(fontSize + 1);
+setFontSize(fontSize);
 
 async function loadState() {
   const st = await (await fetch("/api/state")).json();
@@ -496,6 +636,7 @@ function connect() {
     if (m.type === "rows") m.rows.forEach(r => { if (rows[r.symb]) { renderRow(r); pushChart(r); } });
     else if (m.type === "add") renderRow(m.row);
     else if (m.type === "remove") dropRow(m.symb);
+    else if (m.type === "order") { if (!$("#rows .dragging")) applyOrder(m.symbs); }
     else if (m.type === "status") setStatus(m.status);
     else if (m.type === "alert") addEvent(m.event);
     else if (m.type === "markets") renderMarkets(m.markets);

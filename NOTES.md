@@ -26,8 +26,8 @@
 6. **목소리** — 로컬 TTS(Qwen3-TTS 1.7B, Sohee) → Edge 음성(ko-KR-SunHiNeural, +20%) → 윈도우 SAPI 순서로 고른다.
    캐시 파일 이름이 webull_rsi_monitor 와 같은 규칙이라 그쪽 `tts_cache` 를 같이 쓸 수 있다.
 7. **알림 기록** — `kis_alerts.jsonl` 에 한 줄씩, 서버를 다시 켜도 남는다. 표의 「구간」·「최근 알림」 칸, 차트의 알림 봉 표시.
-8. **지수 띠** — S&P500(SPX) · 나스닥 종합(COMP) · 코스피(0001) · 코스닥(1001) · 니케이(JP#NI225) · 원/달러(FX@KRW)는
-   한국투자증권 REST 를 10초마다, 비트코인은 업비트 공개 시세(KRW-BTC).
+8. **지수 띠** — S&P500(SPX) · 나스닥 종합(COMP) · 코스피(0001) · 니케이(JP#NI225) · 원/달러(FX@KRW)는
+   한국투자증권 REST 를 10초마다, 비트코인은 업비트 공개 시세(KRW-BTC). 코스닥(1001)은 2026-09-25 에 뺐다.
 9. **매수·매도 시그널** (`kis_signal.py`) — webull_rsi_monitor 의 rsi_signal.py 규칙. 09-24 Webull 시그널 15개 중 13개가 같은 봉.
 10. **남이 쓰기 쉽게** — `python kis_rsi.py setup` 으로 키 넣기, `requirements.txt`, 켜면 브라우저 열기, `tts_server.py` 동봉.
 

@@ -18,6 +18,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -33,6 +34,8 @@ EXCHANGE_CACHE = HERE / "kis_exchange.json"
 REST = "https://openapi.koreainvestment.com:9443"
 WS = "ws://ops.koreainvestment.com:21000/tryitout"
 EXCHANGES = ("NAS", "NYS", "AMS")
+DAY_EXCD = {"NAS": "BAQ", "NYS": "BAY", "AMS": "BAA"}   # 미국 주간거래(한국 낮)의 거래소 코드
+NEW_YORK = ZoneInfo("America/New_York")
 
 # HDFSCNT0 (해외주식 실시간체결가) 필드 순서
 US_TR, KR_TR = "HDFSCNT0", "H0STCNT0"
@@ -181,7 +184,7 @@ def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
 #   U 국내지수 — 국내업종 현재지수(FHPUP02100000)
 # 다우존스는 한국투자증권 코드를 찾지 못해 뺐다 (.DJI 등은 빈 값이 온다).
 MARKETS = [("S&P500", "N", "SPX"), ("나스닥", "N", "COMP"), ("코스피", "U", "0001"),
-           ("코스닥", "U", "1001"), ("니케이", "N", "JP#NI225"), ("원/달러", "X", "FX@KRW")]
+           ("니케이", "N", "JP#NI225"), ("원/달러", "X", "FX@KRW")]
 
 
 def fetch_market(appkey, secret, kind, code):
@@ -287,6 +290,17 @@ def normalize(tr_id, rec):
             "XHMS": rec["STCK_CNTG_HOUR"]}
 
 
+def us_day_session(now=None):
+    """미국 주간거래 시간인가. 미국 동부 20:00~04:00, 일요일 밤부터 금요일 새벽까지 (한국 낮).
+    이때는 정규장 쪽(D) 실시간에 체결이 오지 않아 주간거래 쪽(R)으로 받아야 한다. 휴장일은 따지지 않는다."""
+    t = now or datetime.now(NEW_YORK)
+    if t.hour >= 20:
+        return t.weekday() in (6, 0, 1, 2, 3)
+    if t.hour < 4:
+        return t.weekday() in (0, 1, 2, 3, 4)
+    return False
+
+
 class KisInUse(Exception):
     """앱키 하나에 실시간 연결은 하나뿐인데 이미 다른 곳에서 열려 있다."""
 
@@ -377,7 +391,17 @@ class Book:
 
     @property
     def key(self):
-        return (KR_TR, self.symb) if self.excd == "KRX" else f"D{self.excd}{self.symb}"
+        return self.key_for()
+
+    def key_for(self, day=False):
+        """실시간 구독 키. day 면 미국 주간거래 쪽 ('RBAQTSLA' 같은). 국내는 늘 같다."""
+        if self.excd == "KRX":
+            return (KR_TR, self.symb)
+        return f"R{DAY_EXCD[self.excd]}{self.symb}" if day else f"D{self.excd}{self.symb}"
+
+    def on_quote(self, d):
+        """주간거래 체결: 가격·등락·시각만 고친다. 거래가 뜸해 RSI 가 흔들리니 분봉에는 넣지 않는다."""
+        self.price, self.rate, self.us_time = float(d["LAST"]), float(d["RATE"]), d["XHMS"]
 
     def on_tick(self, d):
         """체결 하나를 반영한다. 새 봉이 생기면 True."""
