@@ -23,7 +23,8 @@ webull_rsi_monitor 의 rsi_replay.py 와 같은 생각이다.
 그 시각 뒤 10분 안에 봉이 없으면 (장이 닫혔거나 거래가 끊겼으면) 채점하지 않는다.
 
 「맞음」은 RSI 가 말한 쪽으로 갔는지다. 35·30 미만 알림과 매수 시그널은 오르면 맞음,
-65·70 초과 알림과 매도 시그널은 내리면 맞음. 「수익」도 같은 쪽으로 샀다고 치고 셈한다
+65·70 초과 알림과 매도 시그널은 내리면 맞음. 값이 그대로(보합)인 것은 빼고 센다 — 국내 종목은 호가 단위가
+커서 15분 뒤 그대로인 것이 삼성전자는 22% 나 된다. 보합 비율은 「보합」 칸에 따로 보인다. 「수익」도 같은 쪽으로 샀다고 치고 셈한다
 (초과·매도는 부호를 뒤집는다).
 
 「기준」은 같은 종목·같은 기간 아무 봉에서나 같은 쪽으로 들어갔을 때의 평균 수익이다.
@@ -37,13 +38,19 @@ webull_rsi_monitor 의 rsi_replay.py 와 같은 생각이다.
 주간거래(한국 낮) 분봉은 한국투자증권이 지금 세션 것만 주므로, 되감을 때마다 쌓아야
 날이 갈수록 오버나이트 알림도 채점할 수 있다. 웹 화면과 같은 규칙으로 오버나이트 봉을
 넣을 종목만 넣는다 (최근 오버나이트 5분 칸 절반 넘게 체결, 또는 kis_settings.json 의 "night").
-국내 종목은 아직 되감지 않는다.
+
+국내 종목은 1분봉(FHKST03010230)을 거슬러 받아 묶는다. 한 달 넘게 거슬러 받아진다 (3주에 25초쯤).
+분봉에는 KRX 정규장(09:00~15:30)과 넥스트레이드 애프터(15:30~20:00, 09-14 부터 보인다)가 같이 온다.
+웹 서버가 켤 때 받는 것과 같으니 둘 다 넣고 되감되, 세션을 「정규」·「NXT」로 나눈다.
+웹 서버의 국내 실시간은 KRX 만이라 지금은 NXT 시간에 알림이 나지 않는다. 「NXT」 줄은
+넥스트레이드 실시간도 받으면 어땠을지 보는 것이다.
 
 ────────────────────────────────────────────────────────────
 쓰는 법
 
   python kis_replay.py                   종목 목록(kis_watchlist.json) 전체, 8거래일
   python kis_replay.py TSLA SOXL --days 15
+  python kis_replay.py 005930 000660     국내 종목 (6자리)
   python kis_replay.py --by 세션          정규·프리·애프터·주간 따로
   python kis_replay.py --by 종목
   python kis_replay.py --list            하나씩 다 보기
@@ -86,14 +93,17 @@ HORIZONS = (15, 30, 60)
 SLACK_MIN = 10          # 나온 값 봉이 목표 시각에서 이만큼 늦어도 받아 준다
 WARMUP = 30             # 앞쪽 이만큼 봉은 RSI 가 자리 잡는 중이라 알림을 세지 않는다
 BARS_PER_DAY = 16 * 12  # 미국 04:00~20:00 5분봉
+KR_BARS_PER_DAY = 11 * 12 + 1   # 국내 09:00~20:00 5분봉 (정규 + 넥스트레이드 애프터)
 
 
 def ts(t):
     return datetime.strptime(t, "%Y%m%d %H%M%S")
 
 
-def session(t):
+def session(t, kr=False):
     h = t.hour + t.minute / 60
+    if kr:
+        return "정규" if h <= 15.5 else "NXT"   # 15:30 봉은 종가 단일가
     if h >= 20 or h < 4:
         return "주간"
     if h < 9.5:
@@ -172,6 +182,13 @@ def load_bars(appkey, secret, excd, symb, nmin, days, offline):
     path = CACHE / f"{excd}_{symb}_{nmin}.json"
     cached = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"bars": {}, "night": False}
     bars, night = cached["bars"], cached["night"]
+    if excd == "KRX":
+        if not offline:
+            got = k.fetch_kr_bars(appkey, secret, symb, nmin, need=days * KR_BARS_PER_DAY)
+            bars.update({b["time_us"]: b for b in got})
+            CACHE.mkdir(exist_ok=True)
+            path.write_text(json.dumps({"bars": bars, "night": False}), encoding="utf-8")
+        return [bars[t] for t in sorted(bars)], False
     if not offline:
         bars.update(fetch_history(appkey, secret, excd, symb, nmin, days))
         night, day = night_on(appkey, secret, excd, symb, nmin)
@@ -221,14 +238,14 @@ def exit_index(bars, i, minutes):
 
 def ret(bars, i, j, up):
     r = (bars[j]["close"] / bars[i]["close"] - 1) * 100
-    return r if up else -r
+    return r if up else 0.0 - r   # 보합이 -0.00 으로 찍히지 않게
 
 
-def score(symb, bars, events, horizons):
+def score(symb, bars, events, horizons, kr=False):
     rows = []
     for e in events:
         t = ts(bars[e["i"]]["time_us"])
-        row = {"symb": symb, "time": t, "session": session(t), "kind": e["kind"], "up": e["up"],
+        row = {"symb": symb, "time": t, "session": session(t, kr), "kind": e["kind"], "up": e["up"],
                "rsi": e["rsi"], "price": bars[e["i"]]["close"]}
         for h in horizons:
             j = exit_index(bars, e["i"], h)
@@ -237,11 +254,11 @@ def score(symb, bars, events, horizons):
     return rows
 
 
-def baseline(bars, horizons):
+def baseline(bars, horizons, kr=False):
     """세션마다, 아무 봉에서나 샀을 때 h 분 뒤 평균 수익 (오른 쪽 기준). 파는 쪽은 부호만 뒤집는다."""
     acc = defaultdict(list)
     for i in range(WARMUP, len(bars)):
-        s = session(ts(bars[i]["time_us"]))
+        s = session(ts(bars[i]["time_us"]), kr)
         for h in horizons:
             j = exit_index(bars, i, h)
             if j is not None:
@@ -265,8 +282,10 @@ def summarize(rows, bases, horizon, by):
         base = [b if r["up"] else -b for b, r in zip(base, got) if b is not None]
         avg = sum(r[horizon] for r in got) / len(got) if got else None
         bavg = sum(base) / len(base) if base else None
+        moved = [r for r in got if r[horizon] != 0]
         out.append({"group": g, "kind": kind, "n": len(rs), "scored": len(got),
-                    "hit": sum(r[horizon] > 0 for r in got) / len(got) if got else None,
+                    "hit": sum(r[horizon] > 0 for r in moved) / len(moved) if moved else None,
+                    "flat": (len(got) - len(moved)) / len(got) if got else None,
                     "avg": avg, "base": bavg,
                     "excess": None if avg is None or bavg is None else avg - bavg})
     order = {kd: n for n, kd in enumerate(KIND_ORDER)}
@@ -280,17 +299,18 @@ def pct(x, width=7, sign=True):
 def show(rows, bases, horizons, by, label=""):
     for h in horizons:
         print(f"\n■ {h}분 뒤" + (f" — {label}별" if label else ""))
-        print(f"{'':8}{'종류':<12}{'건수':>5}{'채점':>5}{'맞음':>7}{'수익%':>8}{'기준%':>8}{'초과%':>8}")
+        print(f"{'':8}{'종류':<12}{'건수':>5}{'채점':>5}{'맞음':>7}{'보합':>6}{'수익%':>8}{'기준%':>8}{'초과%':>8}")
         for s in summarize(rows, bases, h, by):
             print(f"{str(s['group']):8}{s['kind']:<12}{s['n']:>5}{s['scored']:>5}"
-                  f"{pct(s['hit'], 7, False)}{pct(s['avg'], 8)}{pct(s['base'], 8)}{pct(s['excess'], 8)}")
+                  f"{pct(s['hit'], 7, False)}{pct(s['flat'], 6, False)}{pct(s['avg'], 8)}{pct(s['base'], 8)}{pct(s['excess'], 8)}")
 
 
 def show_list(rows, horizons):
     for r in sorted(rows, key=lambda r: r["time"]):
         hs = "  ".join(f"{h}분 {pct(r[h], 6)}" for h in horizons)
+        price = f"{r['price']:>9,.0f}" if r["symb"].isdigit() else k.px(r["price"], 9)
         print(f"{r['time']:%m-%d %H:%M} {r['session']:<3} {r['symb']:<6} {r['kind']:<10} "
-              f"RSI {r['rsi']:5.1f}  {k.px(r['price'], 9)}  {hs}")
+              f"RSI {r['rsi']:5.1f}  {price}  {hs}")
 
 
 def write_csv(rows, path, horizons):
@@ -304,7 +324,7 @@ def write_csv(rows, path, horizons):
 
 def main():
     ap = argparse.ArgumentParser(description="지난 분봉을 되감아 알림·시그널을 채점한다")
-    ap.add_argument("tickers", nargs="*", help="없으면 kis_watchlist.json 의 미국 종목 전부")
+    ap.add_argument("tickers", nargs="*", help="없으면 kis_watchlist.json 의 종목 전부 (국내 포함)")
     ap.add_argument("--days", type=int, default=8, help="거슬러 받을 거래일 (기본 8)")
     ap.add_argument("--min", type=int, default=5, help="분봉 (기본 5)")
     ap.add_argument("--period", type=int, default=14, help="RSI 기간 (기본 14)")
@@ -331,19 +351,18 @@ def main():
             excd, symb = found[0].name.split("_")[0], t.upper()
         else:
             excd, symb = k.resolve(appkey, secret, t)
-        if excd == "KRX":
-            print(f"{symb}: 건너뜀 (국내 종목은 아직 되감지 않는다)")
-            continue
         try:
             bars, night = load_bars(appkey, secret, excd, symb, args.min, args.days, args.offline)
         except Exception as e:
             print(f"{symb}: 건너뜀 — {e}")
             continue
         events = replay_alerts(bars, args.period) + replay_signals(bars, args.period)
-        rows += score(symb, bars, events, HORIZONS)
-        bases[symb] = baseline(bars, HORIZONS)
+        kr = excd == "KRX"
+        rows += score(symb, bars, events, HORIZONS, kr)
+        bases[symb] = baseline(bars, HORIZONS, kr)
+        extra = k.KR_INFO.get(symb, {}).get("name", "국내") if kr else f"오버나이트 {'넣음' if night else '뺌'}"
         print(f"{symb:<6} 봉 {len(bars):>5}  {bars[0]['time_us'][:8]}~{bars[-1]['time_us'][:8]}"
-              f"  오버나이트 {'넣음' if night else '뺌'}  알림·시그널 {len(events)}")
+              f"  {extra}  알림·시그널 {len(events)}")
     if not rows:
         sys.exit("채점할 것이 없다.")
     by = {"세션": "session", "종목": "symb"}.get(args.by)
