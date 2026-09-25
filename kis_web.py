@@ -443,10 +443,18 @@ class Hub:
         return next((e for e in self.events if e["symb"] == symb and not e["suppressed"]
                      and e.get("type") != "signal"), None)
 
+    def market_closed(self, book):
+        """그 종목 시장이 하루 쉬는 때 (주말·휴일, 장 마감은 아님). 화면의 「휴장」과 같다.
+        이때는 알림·시그널을 보지 않는다 — 켤 때마다 「시작 때부터」 기록이 쌓였다."""
+        if book.excd == "KRX":
+            now = datetime.now()
+            return now.weekday() >= 5 or now.strftime("%Y-%m-%d") in self.kr_closed
+        return k.us_session() is None
+
     def check_alerts(self, symbs):
         for s in symbs:
             b, g = self.books.get(s), self.gates.get(s)
-            if not b or not g:
+            if not b or not g or self.market_closed(b):
                 continue
             v = b.indicators(self.period)["rsi"]
             if v is None:
@@ -490,7 +498,7 @@ class Hub:
         """앞 봉이 닫힌 종목의 시그널을 다시 셈한다. 방금 닫힌 봉에서 새로 났으면 알린다."""
         for s in symbs:
             b = self.books.get(s)
-            if not b or len(b.bars) < 3:
+            if not b or len(b.bars) < 3 or self.market_closed(b):
                 continue
             old = {(x.bar, x.side) for x in self.signals.get(s, [])}
             self.signals[s] = ks.signals(b.bars[:-1], self.period, lines=self.lines(s))

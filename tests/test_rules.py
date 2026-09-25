@@ -263,6 +263,34 @@ class MutedTest(unittest.TestCase):
         h.settings["sound_sessions"]["kr"] = False
         self.assertEqual(self.muted(h, excd="KRX", symb="005930"), "국내 종목 소리 끔")
 
+    def test_market_closed(self):
+        h = self.hub()
+        h.kr_closed = ["2026-09-25"]
+        kr, us = types.SimpleNamespace(excd="KRX"), types.SimpleNamespace(excd="NAS")
+        for day, want in ((datetime(2026, 9, 25, 10), True),      # 추석
+                          (datetime(2026, 9, 26, 10), True),      # 토요일
+                          (datetime(2026, 9, 28, 10), False),     # 월요일 장중
+                          (datetime(2026, 9, 28, 20), False)):    # 월요일 장 마감 뒤 — 쉬는 날은 아니다
+            FakeNow.fixed = day
+            with mock.patch.object(w, "datetime", FakeNow):
+                self.assertEqual(h.market_closed(kr), want, day)
+        with mock.patch.object(k, "us_session", lambda: None):
+            self.assertTrue(h.market_closed(us))
+        with mock.patch.object(k, "us_session", lambda: "after"):
+            self.assertFalse(h.market_closed(us))
+
+    def test_no_alert_on_closed_day(self):
+        h = self.hub()
+        h.kr_closed = []
+        b = types.SimpleNamespace(excd="KRX", symb="005930", name="삼성전자", price=1.0,
+                                  bars=bars_from([1, 2, 3]), indicators=lambda p: {"rsi": 80.0})
+        h.books, h.gates, h.events, h.period = {"005930": b}, {"005930": al.Gate()}, deque(), 14
+        FakeNow.fixed = datetime(2026, 9, 26, 10)                     # 토요일
+        with mock.patch.object(w, "datetime", FakeNow), mock.patch.object(w, "ALERT_LOG", temp_path(".jsonl")):
+            h.check_alerts({"005930"})
+        self.assertEqual(list(h.events), [])
+        self.assertEqual(h.gates["005930"].level, ("unknown", ""))  # 장이 열리면 처음부터 본다
+
     def test_set_mute(self):
         h = self.hub()
         h.books = {"MU": types.SimpleNamespace(symb="MU")}
