@@ -483,6 +483,49 @@ def divergence_section(info, all_rows, bases, mid, per_day, cost):
     return verdict_table(groups, bases, mid, per_day, cost)
 
 
+def with_trend(r):
+    """알림이 흐름 쪽인가: 오를 때(60분 RSI ≥ 50) 매수 쪽, 내릴 때 매도 쪽."""
+    t = r.get("trend")
+    return t is not None and (t >= 50) == r["up"]
+
+
+def rule_table(rows, cost):
+    """C 를 나오는 규칙대로(5봉 평균) 셈한 것: 건수, 이긴 비율, 평균·비용 뺀·중앙값, 평균 보유, 가장 크게 잃은 한 번."""
+    trs = []
+    for label, g in (("RSI2 모두", rows), ("  · 매수", [r for r in rows if r["up"]]), ("  · 매도", [r for r in rows if not r["up"]])):
+        v = [r["rule"] for r in g if r.get("rule") is not None]
+        if not v:
+            trs.append(f"<tr><th>{label}</th><td class='dim' colspan='7'>없음</td></tr>")
+            continue
+        avg, med = sum(v) / len(v), sorted(v)[len(v) // 2]
+        win = sum(x > 0 for x in v) / len(v)
+        hold = sum(r["hold"] for r in g if r.get("hold") is not None) / len(v)
+        c = lambda x: f"<td class='num {'pos' if x > 0 else 'neg'}'>{x:+.2f}</td>"
+        trs.append(f"<tr><th>{label}</th><td class='num'>{len(v)}</td><td class='num'>{win * 100:.0f}%</td>"
+                   f"{c(avg)}{c(avg - cost)}{c(med)}<td class='num'>{hold:.0f}분</td>{c(min(v))}</tr>")
+    return ("<table><thead><tr><th></th><th class='num'>건수</th><th class='num'>이긴 비율</th><th class='num'>평균%</th>"
+            "<th class='num'>비용 뺀%</th><th class='num'>중앙값%</th><th class='num'>평균 보유</th><th class='num'>가장 크게 잃은 한 번%</th></tr></thead>"
+            f"<tbody>{''.join(trs)}</tbody></table>")
+
+
+def famous_section(info, all_rows, bases, mid, per_day, cost):
+    five = [r for r in all_rows.get(tf.DIV_TF, []) if is_alert(r) and main_session(r)]
+    card = [r for i in info.values() for r in i.get("cardwell", []) if main_session(r)]
+    rsi2 = [r for i in info.values() for r in i.get("rsi2", []) if main_session(r)]
+    groups = [
+        ("지금 알림 (35/65, 흐름 안 봄)", five),
+        ("A. 흐름 쪽 알림만", [r for r in five if with_trend(r)]),
+        ("  · 흐름을 거스른 알림 (뺀 것)", [r for r in five if r.get("trend") is not None and not with_trend(r)]),
+        ("B. 카드웰 선 옮기기 — 모두", card),
+        ("  · 흐름 쪽 (오를 때 40 미만, 내릴 때 60 초과)", [r for r in card if with_trend(r)]),
+        ("  · 흐름 거슬러 (오를 때 80 초과, 내릴 때 20 미만)", [r for r in card if r.get("trend") is not None and not with_trend(r)]),
+        ("C. 코너스 RSI(2) — 모두", rsi2),
+        ("  · 매수 (200봉 평균 위, RSI2 &lt; 5)", [r for r in rsi2 if r["up"]]),
+        ("  · 매도 (200봉 평균 밑, RSI2 &gt; 95)", [r for r in rsi2 if not r["up"]]),
+    ]
+    return verdict_table(groups, bases, mid, per_day, cost) + "<p></p><h2>C 를 나오는 규칙대로 (5봉 평균을 넘으면)</h2>" + rule_table(rsi2, cost)
+
+
 # ── 페이지 ────────────────────────────────────────────────────
 CSS = """
 :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6eb; --text:#1b1f24; --muted:#6b7380;
@@ -563,6 +606,13 @@ def build(offline=True, say=print, cost=COST):
 이중 = MACD 히스토그램도 같이 어긋남. 전날 저가·고가 근처 = 변동폭 절반 안 (영상의 「지지·저항 + 가짜 돌파」 흉내).
 아래 셋은 지금 알림을 다이버전스로 걸렀다면. 90% 구간이 0 위(초록)이고 앞·뒤 절반이 모두 + 이고 비용을 빼도 + 여야 쓸 만하다.</p>
 {divergence_section(info, all_rows, bases, mid, per_day, cost)}</section>""",
+        f"""<section><h2>이름난 RSI 로직 — {tf.DIV_TF}분봉, 정규장 (몰린 것 하나로)</h2>
+<p class="dim"><b>흐름</b> = 알림 때 앞에 닫힌 {tf.TREND_TF}분봉 RSI 가 50 이상이면 오름, 아래면 내림.
+<b>A 추세 필터</b>: 지금 알림 가운데 흐름 쪽만 (오를 때 미만 알림, 내릴 때 초과 알림) — 코너스·카드웰이 모두 「흐름 안의 되돌림만 잡으라」고 한다.
+<b>B 카드웰</b>: 오르는 흐름에선 RSI 가 40~80, 내리는 흐름에선 20~60 에서 논다고 보고 선을 옮긴다 (오를 때 {tf.CARDWELL[True]}, 내릴 때 {tf.CARDWELL[False]}).
+<b>C 코너스 RSI(2)</b>: {tf.RSI2_TREND}봉 평균 위에서 RSI(2) &lt; {tf.RSI2_LO} 면 사고, 밑에서 &gt; {tf.RSI2_HI} 면 판다 (원래는 일봉·200일).
+위 표는 다른 것과 같이 정해진 시간 뒤로, 아래 표는 코너스의 나오는 규칙({tf.RSI2_EXIT}봉 평균을 넘으면)대로 셈했다.</p>
+{famous_section(info, all_rows, bases, mid, per_day, cost)}</section>""",
         f"""<section><h2>변동폭별 — 5분봉 알림, 정규장</h2>
 <p class="dim">변동폭 = 알림 때 그 앞 5분봉 14개의 평균 진폭(고가−저가) ÷ 가격. 알림을 변동폭 순으로 다섯 칸에 나눴다.
 <b>비용 뺀%</b> = 평균 수익 − {cost:.2f}% (사고팔 때 수수료·세금·호가 차이를 합쳐 이만큼 든다고 가정, <code>--cost</code> 로 바꾼다).

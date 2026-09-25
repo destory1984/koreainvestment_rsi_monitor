@@ -219,6 +219,73 @@ def tag_after_divergence(rows, events, groups, found, recent=DIV_RECENT):
         r["div"] = any(b - recent <= c <= b for c in confirms[e["up"]])
 
 
+# ── 이름난 RSI 로직 흉내 (A 추세 필터, B 카드웰 선 옮기기, C 코너스 RSI(2)) ─────────────
+TREND_TF = 60                                   # 추세: 앞에 닫힌 이 분봉의 RSI 가 50 이상이면 오름
+CARDWELL = {True: [35, 40, 80, 85], False: [15, 20, 60, 65]}   # 오름·내림 흐름의 선 (강한 아래, 아래, 위, 강한 위)
+RSI2_N, RSI2_LO, RSI2_HI = 2, 5, 95             # 코너스: RSI(2) 5 밑이면 사고 95 위면 판다
+RSI2_TREND, RSI2_EXIT = 200, 5                  # 200봉 평균 위에서만 사고 아래에서만 판다, 5봉 평균을 넘으면 나온다
+
+
+def trend_rsi(minutes, tf=TREND_TF, period=14):
+    """1분봉마다 그 앞에 닫힌 tf 분봉의 RSI (진행 중인 봉은 안 쓴다). 모자라면 None."""
+    groups = aggregate(minutes, tf)
+    rsi = k.rsi_series([b["close"] for b, _ in groups], period)
+    out = [None] * len(minutes)
+    for n, (_, idx) in enumerate(groups):
+        for i in idx:
+            out[i] = rsi[n - 1] if n else None
+    return out
+
+
+def cardwell_rows(symb, minutes, groups, period, start, kr, atr, rvol, trend):
+    """B: 흐름에 따라 선을 옮긴 알림. 오름용 선·내림용 선으로 각각 걸고, 알림 때 흐름이 맞는 쪽만 남긴다
+    (Gate 하나가 선을 바꿔 가며 도는 것과 같지 않으나, 흐름이 바뀌는 때 말고는 같다)."""
+    events = []
+    for up_trend, ln in CARDWELL.items():
+        for e in walk_alerts(minutes, groups, period, al.Lines.parse(ln)):
+            t = trend[e["i"]]
+            if e["i"] >= start and t is not None and (t >= 50) == up_trend:
+                events.append(e)
+    events.sort(key=lambda e: e["i"])
+    rows = scored(symb, minutes, events, kr, atr, rvol)
+    for r, e in zip(rows, events):
+        r["trend"] = trend[e["i"]]
+    return rows
+
+
+def rsi2_rows(symb, minutes, groups, start, kr, atr, rvol):
+    """C: 코너스 RSI(2). 닫힌 봉 종가로 판단하고 그 봉의 마지막 1분봉에서 들어간다. 나올 때까지 새로 안 들어간다.
+    줄마다 rule(나오는 규칙대로의 수익 %, 알림 쪽 +)·hold(분) 도 붙인다."""
+    bars = [b for b, _ in groups]
+    closes = [b["close"] for b in bars]
+    rsi = k.rsi_series(closes, RSI2_N)
+    sma = lambda n, j: sum(closes[j - n + 1:j + 1]) / n if j + 1 >= n else None
+    events, rules, n = [], [], RSI2_TREND
+    j = n
+    while j < len(bars) - 1:
+        long_ = rsi[j] is not None and rsi[j] < RSI2_LO and closes[j] > sma(n, j)
+        short = rsi[j] is not None and rsi[j] > RSI2_HI and closes[j] < sma(n, j)
+        if not (long_ or short) or groups[j][1][-1] < start:
+            j += 1
+            continue
+        x = j + 1
+        while x < len(bars) - 1:
+            m5 = sma(RSI2_EXIT, x)
+            if (long_ and (closes[x] > m5 or closes[x] < sma(n, x))) or \
+                    (short and (closes[x] < m5 or closes[x] > sma(n, x))):
+                break
+            x += 1
+        i_in, i_out = groups[j][1][-1], groups[x][1][-1]
+        events.append({"i": i_in, "up": long_, "rsi": rsi[j], "kind": "RSI2 " + ("매수" if long_ else "매도")})
+        rules.append((rp.ret(minutes, i_in, i_out, long_),
+                      (rp.ts(minutes[i_out]["time_us"]) - rp.ts(minutes[i_in]["time_us"])).total_seconds() / 60))
+        j = x + 1
+    rows = scored(symb, minutes, events, kr, atr, rvol)
+    for r, (ret, hold) in zip(rows, rules):
+        r["rule"], r["hold"] = ret, hold
+    return rows
+
+
 def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None, diverge=False):
     """봉 길이마다 채점 줄들, 기준, (채점 첫날, 끝날, 날 수), 그리고 더 본 것 {"lines": 선마다 LINE_TF 분봉 알림 줄들,
     "div": 다이버전스 신호 줄들}. diverge 면 DIV_TF 분봉 알림 줄에 div 표시도 붙인다."""
@@ -229,9 +296,12 @@ def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None, diverge=Fa
     start = next(i for i, m in enumerate(minutes) if m["time_us"][:8] >= start_day)
     rows, atr, rvol = {}, atr_pct(minutes), rel_volume(minutes, kr)
     extra = {}
-    if diverge:
+    if diverge:   # 다이버전스와 이름난 로직들 (보고서용)
         g = aggregate(minutes, DIV_TF)
+        trend = trend_rsi(minutes, TREND_TF, period)
         extra["div"], found = divergence_rows(symb, minutes, g, period, start, kr, atr, rvol)
+        extra["cardwell"] = cardwell_rows(symb, minutes, g, period, start, kr, atr, rvol, trend)
+        extra["rsi2"] = rsi2_rows(symb, minutes, g, start, kr, atr, rvol)
     for tf in tfs:
         groups = aggregate(minutes, tf)
         events = walk_alerts(minutes, groups, period, lines) + walk_signals(groups, period, lines)
@@ -239,6 +309,8 @@ def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None, diverge=Fa
         rows[tf] = scored(symb, minutes, events, kr, atr, rvol)
         if diverge and tf == DIV_TF:
             tag_after_divergence(rows[tf], events, groups, found)
+            for r, e in zip(rows[tf], events):
+                r["trend"] = trend[e["i"]]
     by_lines = {}
     if line_sets:
         groups = aggregate(minutes, LINE_TF)
@@ -326,7 +398,8 @@ def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, l
         for tf, rs in rows.items():
             all_rows[tf] += rs
         info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2],
-                      "lines": extra.get("lines", {}), "div": extra.get("div", []), "now": rp.lines_for(symb, lines)}
+                      "lines": extra.get("lines", {}), "div": extra.get("div", []),
+                      "cardwell": extra.get("cardwell", []), "rsi2": extra.get("rsi2", []), "now": rp.lines_for(symb, lines)}
         name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
         say(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "
               + " ".join(f"{tf}분 {len(rs)}" for tf, rs in rows.items()))

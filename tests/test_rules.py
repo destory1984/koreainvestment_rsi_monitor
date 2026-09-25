@@ -756,6 +756,25 @@ class MinuteTest(unittest.TestCase):
         self.assertLess(bars[d.pivot]["low"], bars[d.prev]["low"])
         self.assertEqual(d.confirm, d.pivot + dv.PIVOT_K)
 
+    def test_trend_rsi_uses_previous_closed_bar(self):
+        m = minutes_from([100 + i * 0.01 for i in range(60 * 20)])           # 20시간 내내 오름
+        t = tf.trend_rsi(m, 60, 14)
+        self.assertIsNone(t[60 * 15 - 1])                                     # 15번째 봉 안: 닫힌 봉 14개 → RSI 없음
+        self.assertEqual(t[60 * 16], 100.0)
+        self.assertEqual(t[60 * 16], t[60 * 17 - 1])                          # 봉 안에서는 같은 값 (앞 봉 것)
+
+    def test_rsi2_waits_for_exit_before_next_entry(self):
+        # 오르는 흐름(200봉 평균 위)에서 5분봉 두 번 연달아 급락 → 첫 번째에서만 들어가고, 5봉 평균을 넘어야 나온다
+        closes = [100 + i * 0.05 for i in range(230)] + [110, 109.8, 112, 113]
+        m = []
+        for n, c in enumerate(closes):
+            m += minutes_from([c] * 5, t0=T0 + timedelta(minutes=5 * n))
+        g = tf.aggregate(m, 5)
+        rows = tf.rsi2_rows("A", m, g, 0, False, [None] * len(m), None)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["up"])
+        self.assertGreater(rows[0]["rule"], 0)
+
     def fake_pages(self, bars):
         """fetch_bars 흉내: keyb 보다 앞(그 봉 포함) 최신 3개씩."""
         calls = []
