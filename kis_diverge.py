@@ -8,6 +8,8 @@ kis_diverge.py — RSI·MACD 다이버전스를 기계적으로 찾는다 (되�
   저점·고점   앞뒤 PIVOT_K 봉보다 낮은 저가(높은 고가)를 낸 봉. 뒤 PIVOT_K 봉이 닫혀야 알 수 있으니 그만큼 늦게 확인된다.
   다이버전스  확인된 저점 p 와, 그 앞 LOOKBACK 봉 안의 바로 앞 저점 q 를 견준다.
               가격 저가[p] < 저가[q] 이고 RSI[p] > RSI[q] 면 상승 (고점은 반대로 하락).
+  히든        가격 저점은 높아졌는데(저가[p] > 저가[q]) RSI 저점은 낮아졌다(RSI[p] < RSI[q]) = 상승 히든 (고점은 반대로 하락 히든).
+              오르는 흐름 안의 되돌림이 끝났다는 뜻으로 읽는다 (카드웰의 「역전」). 보통 다이버전스는 흐름이 꺾인다는 쪽이다.
   이중        같은 두 점에서 MACD 히스토그램도 같은 쪽으로 어긋났다 (hist[p] > hist[q], 하락은 반대).
   지지·저항   p 의 저가(고가)가 전날 저가(고가)에서 변동폭(최근 14봉 평균 진폭)의 절반 안.
               전날 선을 잠깐 깨고 다이버전스가 나면 가짜 돌파로 본다는 영상의 생각을 흉내 낸 것이다.
@@ -32,6 +34,7 @@ class Divergence:
     up: bool          # True 면 상승 다이버전스 (오를 쪽)
     macd: bool        # MACD 히스토그램도 어긋났나
     level: bool       # 전날 저가·고가 근처였나
+    hidden: bool = False   # 히든 다이버전스 (흐름이 이어진다는 쪽)
 
 
 def pivots(values, k=None, low=True):
@@ -58,8 +61,8 @@ def prev_day_levels(bars):
     return [prev[b["time_us"][:8]] for b in bars]
 
 
-def find(bars, period=14):
-    """닫힌 봉들에서 난 다이버전스 전부 (확인된 차례대로)."""
+def find(bars, period=14, hidden=False):
+    """닫힌 봉들에서 난 다이버전스 전부 (확인된 차례대로). hidden 이면 히든 다이버전스도 (hidden=True 로 표시)."""
     closes = [b["close"] for b in bars]
     rsi = k.rsi_series(closes, period)
     _, _, hist = k.macd_series(closes)
@@ -75,12 +78,18 @@ def find(bars, period=14):
                 continue
             lower = price[p] < price[q] if up else price[p] > price[q]
             weaker = rsi[p] > rsi[q] if up else rsi[p] < rsi[q]
-            if not (lower and weaker):
+            stronger = rsi[p] < rsi[q] if up else rsi[p] > rsi[q]
+            if lower and weaker:
+                kind = False
+                macd = hist[p] > hist[q] if up else hist[p] < hist[q]
+            elif hidden and price[p] != price[q] and not lower and stronger:
+                kind = True
+                macd = hist[p] < hist[q] if up else hist[p] > hist[q]
+            else:
                 continue
-            macd = hist[p] > hist[q] if up else hist[p] < hist[q]
             lv, near = levels[p], False
             if lv and p >= RANGE_N:
                 rng = sum(ranges[p - RANGE_N:p]) / RANGE_N
                 near = abs(price[p] - (lv[0] if up else lv[1])) <= rng / 2
-            out.append(Divergence(p + PIVOT_K, p, q, up, macd, near))
+            out.append(Divergence(p + PIVOT_K, p, q, up, macd, near, kind))
     return sorted(out, key=lambda d: d.confirm)

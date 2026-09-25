@@ -756,6 +756,35 @@ class MinuteTest(unittest.TestCase):
         self.assertLess(bars[d.pivot]["low"], bars[d.prev]["low"])
         self.assertEqual(d.confirm, d.pivot + dv.PIVOT_K)
 
+    def test_hidden_divergence(self):
+        # 오르는 흐름: 오르내리며 천천히 빠진 저점(RSI 덜 낮음) → 반등 → 급히 빠진 조금 더 높은 저점(RSI 는 더 낮음)
+        closes = [90 + i * 0.3 for i in range(20)]
+        closes += [94.7, 95.3, 94.3, 94.9, 93.9, 94.5, 93.5, 94.1]                    # 첫 저점 93.5, 완만
+        closes += [95 + i for i in range(8)]
+        closes += [99, 96, 93.8] + [95 + i for i in range(6)]                          # 둘째 저점 93.8, 급락
+        bars = [{"time_us": f"20260924 {9 + i // 12:02d}{i % 12 * 5:02d}00", "open": c, "high": c + .1,
+                 "low": c - .1, "close": c, "volume": 1} for i, c in enumerate(closes)]
+        rsi = k.rsi_series(closes, 14)
+        hidden = [d for d in dv.find(bars, hidden=True) if d.hidden and d.up]
+        self.assertTrue(hidden)
+        d = hidden[-1]
+        self.assertGreater(bars[d.pivot]["low"], bars[d.prev]["low"])
+        self.assertLess(rsi[d.pivot], rsi[d.prev])
+        self.assertFalse(any(x.hidden for x in dv.find(bars)))                # 기본은 보통 다이버전스만
+
+    def test_bracket_exits(self):
+        m = minutes_from([100, 100.5, 101, 102, 103])
+        self.assertEqual(tf.bracket(m, 0, True, 99, 2)[1:3], (3.0, "익절"))    # 102 에 닿는 3분 뒤
+        m = minutes_from([100, 99.5, 98.5, 103])
+        self.assertEqual(tf.bracket(m, 0, True, 99, 2)[1:3], (2.0, "손절"))
+        self.assertAlmostEqual(tf.bracket(m, 0, True, 99, 2)[0], -1.0)
+        m = minutes_from([100, 100.5], wiggle=3)                               # 한 1분봉에 둘 다 닿으면 손절
+        self.assertEqual(tf.bracket(m, 0, True, 99, 2)[2], "손절")
+        m = minutes_from([100, 100.2, 100.4])
+        ret, hold, how, x = tf.bracket(m, 0, False, 101, 2)                    # 파는 쪽, 안 닿으면 마지막 봉에서
+        self.assertEqual((how, x), ("시간", 2))
+        self.assertAlmostEqual(ret, -0.4)
+
     def test_trend_rsi_uses_previous_closed_bar(self):
         m = minutes_from([100 + i * 0.01 for i in range(60 * 20)])           # 20시간 내내 오름
         t = tf.trend_rsi(m, 60, 14)

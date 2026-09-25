@@ -193,21 +193,55 @@ def scored(symb, minutes, events, kr, atr, rvol=None):
     return rows
 
 
-DIV_TF = 5          # 다이버전스를 찾는 봉 길이
+DIV_TF = 5          # 다이버전스를 찾는 봉 길이 (알림에 붙이는 표시도 이 봉)
+DIV_TFS = (5, 15, 30, 60)   # 다이버전스 신호를 채점할 봉 길이들
 DIV_RECENT = 12     # 알림 앞 이만큼 봉 안에 같은 쪽 다이버전스가 확인됐으면 「다이버전스 뒤 알림」
+# 손절·익절 (영상 방식): 손절은 다이버전스 저점(고점) 봉의 저가(고가), 익절은 들어간 값에서 손절 폭의 몇 배.
+# 둘 다 안 닿으면 BRACKET_MAX 분 뒤나 그날 마지막 1분봉 종가에 나온다. 한 1분봉에서 둘 다 닿으면 손절로 본다 (나쁜 쪽).
+BRACKET_R = (1.5, 2.0)
+BRACKET_MAX = 390
 
 
-def divergence_rows(symb, minutes, groups, period, start, kr, atr, rvol):
-    """DIV_TF 분봉 다이버전스를 신호로 채점한 줄들. 신호는 확인 봉의 마지막 1분봉에서 들어간다.
-    줄마다 macd(이중 다이버전스), level(전날 저가·고가 근처) 도 붙인다. (줄들, 다이버전스들)"""
-    found = dv.find([b for b, _ in groups], period)
+def bracket(minutes, i, up, stop, r_mult, max_min=BRACKET_MAX):
+    """i 번 1분봉 종가에 들어가 stop 에 손절, 손절 폭 × r_mult 에 익절. (수익 %, 보유 분, 어떻게, 나온 1분봉 번호)."""
+    p0, t0 = minutes[i]["close"], rp.ts(minutes[i]["time_us"])
+    risk = p0 - stop if up else stop - p0
+    target = p0 + risk * r_mult if up else p0 - risk * r_mult
+    day, j = minutes[i]["time_us"][:8], i
+    for x in range(i + 1, len(minutes)):
+        m = minutes[x]
+        t = rp.ts(m["time_us"])
+        if m["time_us"][:8] != day or (t - t0).total_seconds() > max_min * 60:
+            break
+        j = x
+        hit_stop = m["low"] <= stop if up else m["high"] >= stop
+        hit_target = m["high"] >= target if up else m["low"] <= target
+        if hit_stop or hit_target:
+            price, how = (stop, "손절") if hit_stop else (target, "익절")
+            r = (price / p0 - 1) * 100
+            return (r if up else -r), (t - t0).total_seconds() / 60, how, x
+    return rp.ret(minutes, i, j, up), (rp.ts(minutes[j]["time_us"]) - t0).total_seconds() / 60, "시간", j
+
+
+def divergence_rows(symb, minutes, groups, period, start, kr, atr, rvol, trend, tf=DIV_TF):
+    """tf 분봉 다이버전스(히든 포함)를 신호로 채점한 줄들. 신호는 확인 봉의 마지막 1분봉에서 들어간다.
+    줄마다 macd(이중), level(전날 저가·고가 근처), hidden, trend(60분 흐름), tf, risk(손절 폭 %),
+    bracket {배수: (수익 %, 보유 분, 어떻게, 나온 1분봉 시각)} 도 붙인다. (줄들, 보통 다이버전스들)"""
+    found = dv.find([b for b, _ in groups], period, hidden=True)
     use = [d for d in found if groups[d.confirm][1][-1] >= start]
     events = [{"i": groups[d.confirm][1][-1], "up": d.up, "rsi": 0.0,
-               "kind": "다이버전스 " + ("상승" if d.up else "하락")} for d in use]
+               "kind": ("히든 " if d.hidden else "다이버전스 ") + ("상승" if d.up else "하락")} for d in use]
     rows = scored(symb, minutes, events, kr, atr, rvol)
-    for r, d in zip(rows, use):
-        r["macd"], r["level"] = d.macd, d.level
-    return rows, found
+    for r, d, e in zip(rows, use, events):
+        piv = groups[d.pivot][0]
+        stop = piv["low"] if d.up else piv["high"]
+        p0 = minutes[e["i"]]["close"]
+        r.update(macd=d.macd, level=d.level, hidden=d.hidden, trend=trend[e["i"]], tf=tf,
+                 risk=abs(p0 - stop) / p0 * 100, bracket={})
+        for m in BRACKET_R:
+            ret, hold, how, x = bracket(minutes, e["i"], d.up, stop, m)
+            r["bracket"][m] = (ret, hold, how, rp.ts(minutes[x]["time_us"]))
+    return rows, [d for d in found if not d.hidden]
 
 
 def tag_after_divergence(rows, events, groups, found, recent=DIV_RECENT):
@@ -299,7 +333,11 @@ def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None, diverge=Fa
     if diverge:   # 다이버전스와 이름난 로직들 (보고서용)
         g = aggregate(minutes, DIV_TF)
         trend = trend_rsi(minutes, TREND_TF, period)
-        extra["div"], found = divergence_rows(symb, minutes, g, period, start, kr, atr, rvol)
+        extra["div_tf"] = {}
+        for dtf in DIV_TFS:
+            extra["div_tf"][dtf], f = divergence_rows(symb, minutes, aggregate(minutes, dtf), period, start, kr, atr, rvol, trend, dtf)
+            if dtf == DIV_TF:
+                extra["div"], found = extra["div_tf"][dtf], f
         extra["cardwell"] = cardwell_rows(symb, minutes, g, period, start, kr, atr, rvol, trend)
         extra["rsi2"] = rsi2_rows(symb, minutes, g, start, kr, atr, rvol)
     for tf in tfs:
@@ -398,7 +436,7 @@ def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, l
         for tf, rs in rows.items():
             all_rows[tf] += rs
         info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2],
-                      "lines": extra.get("lines", {}), "div": extra.get("div", []),
+                      "lines": extra.get("lines", {}), "div": extra.get("div", []), "div_tf": extra.get("div_tf", {}),
                       "cardwell": extra.get("cardwell", []), "rsi2": extra.get("rsi2", []), "now": rp.lines_for(symb, lines)}
         name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
         say(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "

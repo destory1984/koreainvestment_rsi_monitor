@@ -466,7 +466,9 @@ def verdict_table(groups, bases, mid, per_day, cost):
 
 
 def divergence_section(info, all_rows, bases, mid, per_day, cost):
-    div = [r for i in info.values() for r in i.get("div", []) if main_session(r)]
+    alld = [r for i in info.values() for r in i.get("div", []) if main_session(r)]
+    div = [r for r in alld if not r.get("hidden")]
+    hid = [r for r in alld if r.get("hidden")]
     five = [r for r in all_rows.get(tf.DIV_TF, []) if is_alert(r) and main_session(r)]
     sig = [r for r in all_rows.get(tf.DIV_TF, []) if not is_alert(r) and main_session(r)]
     groups = [
@@ -475,12 +477,72 @@ def divergence_section(info, all_rows, bases, mid, per_day, cost):
         ("  · 하락 (내릴 쪽)", [r for r in div if not r["up"]]),
         ("다이버전스 — RSI + MACD (이중)", [r for r in div if r["macd"]]),
         ("다이버전스 — 이중 + 전날 저가·고가 근처", [r for r in div if r["macd"] and r["level"]]),
+        ("히든 다이버전스 — 모두", hid),
+        ("  · 상승 히든 (오를 쪽)", [r for r in hid if r["up"]]),
+        ("  · 하락 히든 (내릴 쪽)", [r for r in hid if not r["up"]]),
+        ("  · 흐름 쪽 (60분 흐름과 같은 쪽)", [r for r in hid if with_trend(r)]),
+        ("  · 흐름 거슬러", [r for r in hid if r.get("trend") is not None and not with_trend(r)]),
+        ("  · 히든 + MACD 도 (이중)", [r for r in hid if r["macd"]]),
         (f"{tf.DIV_TF}분봉 알림 — 모두 (지금)", five),
         (f"  · 앞 {tf.DIV_TF * tf.DIV_RECENT}분 안에 같은 쪽 다이버전스", [r for r in five if r.get("div")]),
         ("  · 다이버전스 없이", [r for r in five if not r.get("div")]),
         (f"{tf.DIV_TF}분봉 매수·매도 시그널 (지금, 참고)", sig),
     ]
     return verdict_table(groups, bases, mid, per_day, cost)
+
+
+def div_tf_section(info, bases, mid, per_day, cost):
+    """봉 길이마다 보통·히든 다이버전스 (정해진 시간 뒤)."""
+    groups = []
+    for t in tf.DIV_TFS:
+        rows = [r for i in info.values() for r in i.get("div_tf", {}).get(t, []) if main_session(r)]
+        groups += [(f"{t}분봉 — 보통", [r for r in rows if not r["hidden"]]),
+                   (f"{t}분봉 — 히든", [r for r in rows if r["hidden"]]),
+                   ("  · 히든, 흐름 쪽", [r for r in rows if r["hidden"] and with_trend(r)])]
+    return verdict_table(groups, bases, mid, per_day, cost)
+
+
+def no_overlap(rows, m):
+    """종목마다 앞 거래에서 나오기 전에 난 신호는 뺀다 (손절·익절 배수 m 기준)."""
+    out, busy = [], {}
+    for r in sorted(rows, key=lambda r: (r["symb"], r["time"])):
+        if r["symb"] in busy and r["time"] < busy[r["symb"]]:
+            continue
+        out.append(r)
+        busy[r["symb"]] = r["bracket"][m][3]
+    return out
+
+
+def bracket_table(info, mid, cost):
+    """손절(저점·고점)·익절(손절 폭 × 배수)대로 나왔다면. 봉 길이 × 보통·히든 × 배수마다 한 줄."""
+    trs = []
+    c = lambda x: "<td class='dim'>-</td>" if x is None else f"<td class='num {'pos' if x > 0 else 'neg'}'>{x:+.2f}</td>"
+    for t in tf.DIV_TFS:
+        rows = [r for i in info.values() for r in i.get("div_tf", {}).get(t, []) if main_session(r)]
+        for label, g in ((f"{t}분봉 — 보통", [r for r in rows if not r["hidden"]]),
+                         (f"{t}분봉 — 히든", [r for r in rows if r["hidden"]])):
+            for m in tf.BRACKET_R:
+                rs = no_overlap(g, m)
+                if not rs:
+                    trs.append(f"<tr><th>{label}</th><td>{m:g}배</td><td class='dim' colspan='11'>없음</td></tr>")
+                    continue
+                v = [r["bracket"][m][0] for r in rs]
+                how = [r["bracket"][m][2] for r in rs]
+                avg = sum(v) / len(v)
+                half = [[r["bracket"][m][0] for r in rs if (day_of(r) < mid) == first] for first in (True, False)]
+                half = [sum(x) / len(x) if x else None for x in half]
+                trs.append(
+                    f"<tr><th>{label}</th><td>{m:g}배</td><td class='num'>{len(rs)}</td>"
+                    f"<td class='num'>{sum(x > 0 for x in v) / len(v) * 100:.0f}%</td>"
+                    + "".join(f"<td class='num'>{how.count(w) / len(how) * 100:.0f}%</td>" for w in ("익절", "손절", "시간"))
+                    + f"<td class='num'>{sum(r['risk'] for r in rs) / len(rs):.2f}</td>"
+                    f"<td class='num'>{sum(r['bracket'][m][1] for r in rs) / len(rs):.0f}분</td>"
+                    f"{c(avg)}{c(avg - cost)}{c(half[0])}{c(half[1])}</tr>")
+    head = ("<thead><tr><th></th><th>익절</th><th class='num'>건수</th><th class='num'>이긴 비율</th>"
+            "<th class='num'>익절</th><th class='num'>손절</th><th class='num'>시간</th><th class='num'>손절 폭%</th>"
+            "<th class='num'>평균 보유</th><th class='num'>평균%</th><th class='num'>비용 뺀%</th>"
+            "<th class='num'>앞 절반%</th><th class='num'>뒤 절반%</th></tr></thead>")
+    return f"<table>{head}<tbody>{''.join(trs)}</tbody></table>"
 
 
 def with_trend(r):
@@ -606,6 +668,16 @@ def build(offline=True, say=print, cost=COST):
 이중 = MACD 히스토그램도 같이 어긋남. 전날 저가·고가 근처 = 변동폭 절반 안 (영상의 「지지·저항 + 가짜 돌파」 흉내).
 아래 셋은 지금 알림을 다이버전스로 걸렀다면. 90% 구간이 0 위(초록)이고 앞·뒤 절반이 모두 + 이고 비용을 빼도 + 여야 쓸 만하다.</p>
 {divergence_section(info, all_rows, bases, mid, per_day, cost)}</section>""",
+        f"""<section><h2>다이버전스 — 봉 길이별 (15·30·60분봉도), 정규장 (몰린 것 하나로)</h2>
+<p class="dim">같은 규칙(앞뒤 {dv.PIVOT_K}봉, 앞 점 {dv.LOOKBACK}봉 안)을 긴 봉에 건다. 긴 봉일수록 확인이 늦고(60분봉이면 {dv.PIVOT_K}시간) 드물다.
+<b>히든</b> = 가격 저점은 높아졌는데 RSI 저점은 낮아짐(상승 히든), 고점은 반대 — 흐름이 이어진다는 쪽. <b>흐름 쪽</b> = 60분 흐름과 같은 쪽.</p>
+{div_tf_section(info, bases, mid, per_day, cost)}</section>""",
+        f"""<section><h2>다이버전스 — 손절·익절대로 나왔다면, 정규장</h2>
+<p class="dim">영상 방식: 손절 = 다이버전스 저점(고점) 봉의 저가(고가), 익절 = 들어간 값 ± 손절 폭 × {' · '.join(f'{m:g}' for m in tf.BRACKET_R)}배.
+둘 다 안 닿으면 {tf.BRACKET_MAX}분 뒤나 그날 마지막 1분봉에 나온다(「시간」). 한 1분봉에서 둘 다 닿으면 손절로 본다.
+한 종목에서 거래 중에 난 신호는 뺐다. 본전 이긴 비율은 1.5배면 40%, 2배면 33% (비용 빼기 전, 시간 청산 없을 때).
+<b>비용 뺀%</b> = 평균 − {cost:.2f}%. 앞·뒤 절반이 모두 + 이고 비용을 빼도 + 여야 쓸 만하다.</p>
+{bracket_table(info, mid, cost)}</section>""",
         f"""<section><h2>이름난 RSI 로직 — {tf.DIV_TF}분봉, 정규장 (몰린 것 하나로)</h2>
 <p class="dim"><b>흐름</b> = 알림 때 앞에 닫힌 {tf.TREND_TF}분봉 RSI 가 50 이상이면 오름, 아래면 내림.
 <b>A 추세 필터</b>: 지금 알림 가운데 흐름 쪽만 (오를 때 미만 알림, 내릴 때 초과 알림) — 코너스·카드웰이 모두 「흐름 안의 되돌림만 잡으라」고 한다.
