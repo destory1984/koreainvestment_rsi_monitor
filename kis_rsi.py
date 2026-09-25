@@ -16,7 +16,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -371,13 +371,31 @@ def normalize(tr_id, rec):
 
 # 뉴욕증권거래소가 하루 종일 쉬는 날 (동부 날짜). 한국투자증권에 미국 휴장일 조회가 없어 `holidays` 꾸러미가
 # 규칙으로 셈한 것을 쓴다 (굿프라이데이·대체휴일 포함, 해가 바뀌어도 알아서). 손으로 적던 2026~2027 목록과 같았다.
-# 일찍 닫는 날(추수감사절 다음 날·크리스마스 이브 13:00)은 따지지 않는다.
 NYSE_HOLIDAYS = holidays.NYSE()
 
 
 def us_holidays(years):
     """그해들 미국 휴장일 ['YYYY-MM-DD', ...] (화면에 보낸다)."""
     return sorted(d.isoformat() for d in holidays.NYSE(years=years))
+
+
+def us_early_close(d):
+    """그날(동부 날짜) 정규장이 13:00 에 일찍 닫는가. 독립기념일 전날(7/3 이 월~목), 추수감사절 다음 금요일,
+    크리스마스 이브(평일이고 휴장일이 아닐 때). 애프터는 17:00 까지. `holidays` 꾸러미에 없어 규칙으로 센다."""
+    if d.weekday() >= 5 or d in NYSE_HOLIDAYS:
+        return False
+    if (d.month, d.day) == (7, 3):
+        return d.weekday() <= 3
+    if (d.month, d.day) == (12, 24):
+        return True
+    # 추수감사절은 11월 넷째 목요일 → 다음 날은 22~28일의 금요일
+    return d.month == 11 and d.weekday() == 4 and 23 <= d.day <= 29
+
+
+def us_early_closes(years):
+    """그해들 일찍 닫는 날 ['YYYY-MM-DD', ...] (화면에 보낸다)."""
+    days = (date(y, 1, 1) + timedelta(days=i) for y in years for i in range(366))
+    return sorted({d.isoformat() for d in days if d.year in years and us_early_close(d)})
 
 
 def us_closed(d):
@@ -405,7 +423,8 @@ def us_session(now=None):
     if us_closed(t.date()):
         return None
     h = t.hour + t.minute / 60
-    return "pre" if 4 <= h < 9.5 else "regular" if 9.5 <= h < 16 else "after" if 16 <= h < 20 else None
+    close, after = (13, 17) if us_early_close(t.date()) else (16, 20)
+    return "pre" if 4 <= h < 9.5 else "regular" if 9.5 <= h < close else "after" if close <= h < after else None
 
 
 def kr_holidays(appkey, secret):

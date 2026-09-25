@@ -454,6 +454,16 @@ class SessionTest(unittest.TestCase):
         self.assertIsNone(k.us_session(self.at("2028-04-14 10:00")))      # 2028 굿프라이데이 — 목록 없이 셈
         self.assertEqual(k.us_session(self.at("2026-10-12 10:00")), "regular")   # 콜럼버스데이는 연다
 
+    def test_us_early_close(self):
+        # 추수감사절 다음 날: 정규장 13:00, 애프터 17:00 까지
+        for t, want in {"2026-11-27 12:59": "regular", "2026-11-27 13:00": "after",
+                        "2026-11-27 16:59": "after", "2026-11-27 17:00": None}.items():
+            self.assertEqual(k.us_session(self.at(t)), want, t)
+        # 알려진 날들 — 2021 은 7/3 이 토요일, 12/24 가 휴장(크리스마스 대체)이라 추수감사절 다음 날뿐
+        self.assertEqual(k.us_early_closes([2021]), ["2021-11-26"])
+        self.assertEqual(k.us_early_closes([2025]), ["2025-07-03", "2025-11-28", "2025-12-24"])
+        self.assertEqual(k.us_early_closes([2026]), ["2026-11-27", "2026-12-24"])   # 7/3 은 휴장(금)
+
     def test_kr_holidays_cached_once_a_day(self):
         page = {"rt_cd": "0", "output": [
             {"bass_dt": "20260925", "opnd_yn": "N"}, {"bass_dt": "20260928", "opnd_yn": "Y"},

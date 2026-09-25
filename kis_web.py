@@ -390,7 +390,8 @@ class Hub:
 
     def holidays(self):
         year = datetime.now().year
-        return {"kr": self.kr_closed, "us": k.us_holidays([year, year + 1])}
+        return {"kr": self.kr_closed, "us": k.us_holidays([year, year + 1]),
+                "us_early": k.us_early_closes([year, year + 1])}
 
     def load_holidays(self):
         """국내 휴장일을 하루 한 번 받는다 (블로킹). 받았으면 True."""

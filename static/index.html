@@ -778,8 +778,11 @@ function usSession() {
   if (wd === 0) return ["휴장", 0, false];
   if (holiday("us", ymd)) return HOLIDAY;
   if (min < H(9.5)) return ["프리장", H(9.5), true];
-  if (min < H(16)) return ["정규장", H(16), true];
-  return ["애프터", H(20), true];
+  // 일찍 닫는 날(추수감사절 다음 날 등)은 정규장 13:00, 애프터 17:00 까지. 그 뒤 주간거래 전까지는 장 마감
+  const early = holiday("us_early", ymd);
+  if (min < H(early ? 13 : 16)) return [early ? "정규장 (13시 조기 마감)" : "정규장", H(early ? 13 : 16), true];
+  if (early && min >= H(17)) return ["장 마감", 0, false];
+  return ["애프터", H(early ? 17 : 20), true];
 }
 
 // 한국은 서울 시각. 정규장 09:00~15:30, 그 앞뒤 시간외
