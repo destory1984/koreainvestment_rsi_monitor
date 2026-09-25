@@ -121,7 +121,7 @@ def session(t, kr=False):
 def fetch_history(appkey, secret, excd, symb, nmin, days):
     """정규 쪽 분봉을 days 거래일 어치 거슬러 받는다."""
     bars, keyb = {}, ""
-    for _ in range(days * BARS_PER_DAY // 119 + 1):
+    for _ in range(days * BARS_PER_DAY * 5 // nmin // 119 + 1):   # BARS_PER_DAY 는 5분봉 기준
         page = k.fetch_bars(appkey, secret, excd, symb, nmin, keyb=keyb)
         new = [b for b in page if b["time_us"] not in bars]
         if not new:
