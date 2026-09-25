@@ -705,6 +705,37 @@ class MinuteTest(unittest.TestCase):
         self.assertTrue(ev)
         self.assertLess(ev[0]["i"] - 60 * 16, 59)                            # 봉 끝(59분)보다 앞
 
+    def test_atr_pct_uses_closed_bars_only(self):
+        # 5분봉 진폭 1 (가격 100) 이 쌓이면 1%. 14개가 닫히기 전에는 None
+        m = minutes_from([100] * (5 * 16), wiggle=0.5)
+        a = tf.atr_pct(m, 5, 14)
+        self.assertIsNone(a[5 * 14 - 1])                                      # 14번째 봉 안: 앞에 닫힌 봉 13개
+        self.assertAlmostEqual(a[5 * 14], 1.0)
+
+    def test_adverse_move(self):
+        m = minutes_from([100, 99, 98, 101, 103])                             # 오를 쪽 알림: 저가 98 까지 갔다
+        mae = tf.adverse(m, 0, True, horizons=(2, 60))
+        self.assertAlmostEqual(mae[2], -2.0)
+        self.assertAlmostEqual(mae[60], -2.0)                                 # 봉이 끝나도 그때까지의 최악
+        self.assertAlmostEqual(tf.adverse(m, 0, False, horizons=(60,))[60], -3.0)   # 내릴 쪽: 고가 103
+
+    def test_rel_volume_per_session(self):
+        pre = minutes_from([1] * 20, t0=datetime(2026, 9, 24, 8, 0))
+        reg = minutes_from([1] * 20, t0=datetime(2026, 9, 24, 10, 0))
+        for b in pre:
+            b["volume"] = 10
+        for b in reg:
+            b["volume"] = 1000
+        rv = tf.rel_volume(pre + reg, n=5)
+        self.assertAlmostEqual(rv[10], 1.0)                                   # 프리는 프리끼리 견준다
+        self.assertAlmostEqual(rv[30], 1.0)
+
+    def test_dedupe_keeps_first_of_a_burst(self):
+        import kis_report as rep
+        t = datetime(2026, 9, 24, 10, 0)
+        rows = [{"symb": s, "time": t + timedelta(minutes=d)} for s, d in (("A", 0), ("A", 30), ("A", 61), ("B", 5))]
+        self.assertEqual([(r["symb"], r["time"].minute) for r in rep.dedupe(rows)], [("A", 0), ("A", 1), ("B", 5)])
+
     def fake_pages(self, bars):
         """fetch_bars 흉내: keyb 보다 앞(그 봉 포함) 최신 3개씩."""
         calls = []

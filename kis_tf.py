@@ -143,11 +143,52 @@ def atr_pct(minutes, tf=ATR_TF, n=ATR_N):
     return out
 
 
-def scored(symb, minutes, events, kr, atr):
-    """rp.score 에 알림 때 변동폭(atr, %)을 붙인다."""
+RVOL_MIN = 5   # 거래량 비율: 알림 앞 이만큼 분의 거래량 합 ÷ 그 종목의 보통(중앙값) 같은 길이 거래량
+
+
+def rel_volume(minutes, kr=False, n=RVOL_MIN):
+    """1분봉마다 (그 분까지 n 분 거래량 합) ÷ (그 종목·같은 세션 모든 분의 같은 합의 중앙값). 중앙값이 0 이면 None.
+    세션마다 따로 보는 것은 프리·애프터가 늘 정규장보다 얇아서다 — 그 세션 안에서 얇은 때를 찾는다."""
+    sums, sess, run = [], [], 0
+    for i, m in enumerate(minutes):
+        run += m["volume"] - (minutes[i - n]["volume"] if i >= n else 0)
+        sums.append(run)
+        sess.append(rp.session(rp.ts(m["time_us"]), kr))
+    med = {}
+    for key in set(sess):
+        pos = sorted(x for x, s_ in zip(sums, sess) if s_ == key and x > 0)
+        med[key] = pos[len(pos) // 2] if pos else 0
+    return [x / med[s_] if med[s_] else None for x, s_ in zip(sums, sess)]
+
+
+def adverse(minutes, i, up, horizons=HORIZONS):
+    """i 번 1분봉 종가에 들어가 h 분 동안 가장 반대로 간 폭 (%, 0 이하). 알림 쪽이 up 이면 저가를 본다."""
+    t0, p0 = rp.ts(minutes[i]["time_us"]), minutes[i]["close"]
+    ends = sorted(horizons)
+    out, worst, k = {}, 0.0, 0
+    for j in range(i + 1, len(minutes)):
+        t = rp.ts(minutes[j]["time_us"])
+        while k < len(ends) and (t - t0).total_seconds() > ends[k] * 60:
+            out[ends[k]] = worst
+            k += 1
+        if k == len(ends):
+            break
+        m = minutes[j]
+        move = (m["low"] / p0 - 1) * 100 if up else (1 - m["high"] / p0) * 100
+        worst = min(worst, move)
+    for h in ends[k:]:
+        out[h] = worst
+    return out
+
+
+def scored(symb, minutes, events, kr, atr, rvol=None):
+    """rp.score 에 알림 때 변동폭(atr, %), 거래량 비율(rvol), 시간마다 최대 역행(mae, %)을 붙인다."""
     rows = rp.score(symb, minutes, events, HORIZONS, kr)
     for r, e in zip(rows, events):
         r["atr"] = atr[e["i"]]
+        r["rvol"] = rvol[e["i"]] if rvol else None
+        mae = adverse(minutes, e["i"], e["up"])
+        r["mae"] = {h: (mae[h] if r[h] is not None else None) for h in HORIZONS}
     return rows
 
 
@@ -158,18 +199,18 @@ def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None):
         return {}, {}, None, {}
     start_day = days[WARMUP_DAYS]
     start = next(i for i, m in enumerate(minutes) if m["time_us"][:8] >= start_day)
-    rows, atr = {}, atr_pct(minutes)
+    rows, atr, rvol = {}, atr_pct(minutes), rel_volume(minutes, kr)
     for tf in tfs:
         groups = aggregate(minutes, tf)
         events = walk_alerts(minutes, groups, period, lines) + walk_signals(groups, period, lines)
         events = [e for e in events if e["i"] >= start]
-        rows[tf] = scored(symb, minutes, events, kr, atr)
+        rows[tf] = scored(symb, minutes, events, kr, atr, rvol)
     by_lines = {}
     if line_sets:
         groups = aggregate(minutes, LINE_TF)
         for name, ln in line_sets.items():
             events = [e for e in walk_alerts(minutes, groups, period, al.Lines.parse(ln)) if e["i"] >= start]
-            by_lines[name] = scored(symb, minutes, events, kr, atr)
+            by_lines[name] = scored(symb, minutes, events, kr, atr, rvol)
     # 기준: 채점 구간의 아무 분에서나 (WARMUP 봉은 이미 앞에서 지났으니 0 부터)
     base = baseline(minutes[start:], kr)
     return rows, base, (start_day, days[-1], len(days) - WARMUP_DAYS), by_lines

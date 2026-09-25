@@ -280,6 +280,157 @@ def atr_table(rows, bases, cost, parts=5):
     return f"<table>{head}<tbody>{''.join(trs)}</tbody></table>"
 
 
+DEDUP_MIN = 60    # 같은 종목에서 이 분 안에 또 난 알림은 하나로 센다 (한 번 움직임에 몰려 울린 것)
+BOOT = 1000       # 날 단위로 다시 뽑는 횟수
+
+
+def dedupe(rows, gap=DEDUP_MIN):
+    """종목마다 앞 알림에서 gap 분 안에 난 알림을 뺀다 (종류·방향 상관없이)."""
+    out, last = [], {}
+    for r in sorted(rows, key=lambda r: (r["symb"], r["time"])):
+        t = last.get(r["symb"])
+        if t is None or (r["time"] - t).total_seconds() >= gap * 60:
+            out.append(r)
+            last[r["symb"]] = r["time"]
+    return out
+
+
+def row_excess(r, bases, h):
+    b = bases[r["symb"]].get((r["session"], h))
+    if r[h] is None or b is None:
+        return None
+    return r[h] - (b if r["up"] else -b)
+
+
+def day_band(rows, bases, h=60, n=BOOT, seed=1):
+    """날 단위로 다시 뽑아(bootstrap) 평균 초과의 90% 구간. 같은 날 알림은 같이 움직이니 날을 한 덩어리로 본다."""
+    import random
+    by_day = {}
+    for r in rows:
+        x = row_excess(r, bases, h)
+        if x is not None:
+            by_day.setdefault(day_of(r), []).append(x)
+    days = list(by_day.values())
+    if len(days) < 5:
+        return None
+    rnd, means = random.Random(seed), []
+    for _ in range(n):
+        pick = [x for _ in days for x in rnd.choice(days)]
+        means.append(sum(pick) / len(pick))
+    means.sort()
+    return means[int(n * .05)], means[int(n * .95)]
+
+
+def dedupe_table(all_rows, bases, h=60):
+    """봉 길이마다: 모든 알림 vs 몰린 것 하나로 센 알림, 그리고 날 단위 90% 구간."""
+    trs = []
+    for t, rows in all_rows.items():
+        rs = [r for r in rows if is_alert(r) and main_session(r)]
+        one = dedupe(rs)
+        band = day_band(one, bases, h)
+        if band:
+            cls = "pos sure" if band[0] > 0 else "neg sure" if band[1] < 0 else "dim"
+            bt = f"<td class='num {cls}'>{band[0]:+.2f} ~ {band[1]:+.2f}</td>"
+        else:
+            bt = "<td class='dim'>-</td>"
+        trs.append(f"<tr><th>{t}분</th><td class='num'>{len(rs)}</td>{cell(rs, bases, h)}"
+                   f"<td class='num'>{len(one)}</td>{cell(one, bases, h)}{bt}</tr>")
+    return ("<table><thead><tr><th rowspan='2'>봉</th><th colspan='3'>모든 알림</th>"
+            f"<th colspan='4'>{DEDUP_MIN}분 안에 몰린 것은 하나로</th></tr>"
+            "<tr><th class='num'>건수</th><th class='num'>맞음</th><th class='num'>초과%</th>"
+            "<th class='num'>건수</th><th class='num'>맞음</th><th class='num'>초과%</th><th class='num'>초과 90% 구간</th></tr></thead>"
+            f"<tbody>{''.join(trs)}</tbody></table>")
+
+
+def money_cells(rows, h, cost):
+    """평균%, 비용 뺀%, 평균 최대 역행% 세 칸."""
+    got = [r[h] for r in rows if r[h] is not None]
+    maes = [r["mae"][h] for r in rows if r.get("mae") and r["mae"].get(h) is not None]
+    if not got:
+        return "<td class='dim'>-</td>" * 3
+    avg = sum(got) / len(got)
+    net = avg - cost
+    mae = sum(maes) / len(maes) if maes else None
+    return (f"<td class='num {'pos' if avg > 0 else 'neg'}'>{avg:+.2f}</td>"
+            f"<td class='num {'pos' if net > 0 else 'neg'}'>{net:+.2f}</td>"
+            f"<td class='num neg'>{'-' if mae is None else f'{mae:.2f}'}</td>")
+
+
+MONEY_H = (30, 60, 120)
+
+
+def money_head(first):
+    return (f"<thead><tr><th rowspan='2'>{first}</th><th rowspan='2' class='num'>건수</th>"
+            + "".join(f"<th colspan='3'>{h}분 뒤</th>" for h in MONEY_H) + "</tr><tr>"
+            + "".join("<th class='num'>평균%</th><th class='num'>비용 뺀%</th><th class='num'>최대 역행%</th>" for _ in MONEY_H)
+            + "</tr></thead>")
+
+
+def money_table(all_rows, cost):
+    """봉 길이마다 비용을 뺀 평균과, 들어간 뒤 반대로 가장 멀리 간 폭의 평균."""
+    trs = []
+    for t, rows in all_rows.items():
+        rs = dedupe([r for r in rows if is_alert(r) and main_session(r)])
+        trs.append(f"<tr><th>{t}분</th><td class='num'>{len(rs)}</td>" + "".join(money_cells(rs, h, cost) for h in MONEY_H) + "</tr>")
+    return f"<table>{money_head('봉')}<tbody>{''.join(trs)}</tbody></table>"
+
+
+RVOL_BANDS = ((0, .3, "아주 얇음"), (.3, 1, "얇음"), (1, 3, "보통"), (3, float("inf"), "많음"))
+
+
+def rvol_table(rows, cost):
+    """알림 앞 5분 거래량이 그 종목 보통의 몇 배였나로 나눠 본다 (5분봉 알림, 모든 세션)."""
+    rs = [r for r in rows if is_alert(r) and r.get("rvol") is not None]
+    trs = []
+    for lo, hi, name in RVOL_BANDS:
+        g = dedupe([r for r in rs if lo <= r["rvol"] < hi])
+        if not g:
+            continue
+        rng = f"{lo:g}~{hi:g}배" if hi != float("inf") else f"{lo:g}배 넘게"
+        sess = {}
+        for r in g:
+            key = ("국내 " if r["symb"].isdigit() else "") + r["session"]
+            sess[key] = sess.get(key, 0) + 1
+        mix = ", ".join(f"{k} {v * 100 // len(g)}%" for k, v in sorted(sess.items(), key=lambda kv: -kv[1])[:3])
+        s = tf.stats(g, {r["symb"]: {} for r in g}, 60)
+        hit = "-" if s["hit"] is None else f"{s['hit'] * 100:.0f}%"
+        trs.append(f"<tr><th>{name}<span class='dim'> {rng}</span></th><td class='num'>{len(g)}</td>"
+                   f"<td class='num'>{hit}</td>" + "".join(money_cells(g, h, cost) for h in MONEY_H)
+                   + f"<td class='dim'>{mix}</td></tr>")
+    head = ("<thead><tr><th rowspan='2'>거래량</th><th rowspan='2' class='num'>건수</th><th rowspan='2' class='num'>60분 맞음</th>"
+            + "".join(f"<th colspan='3'>{h}분 뒤</th>" for h in MONEY_H) + "<th rowspan='2'>세션</th></tr><tr>"
+            + "".join("<th class='num'>평균%</th><th class='num'>비용 뺀%</th><th class='num'>최대 역행%</th>" for _ in MONEY_H)
+            + "</tr></thead>")
+    return f"<table>{head}<tbody>{''.join(trs)}</tbody></table>"
+
+
+ATR_GATES = (0, 0.4, 0.5, 0.66, 0.8, 1.0)   # 「변동폭이 이만큼(%) 넘을 때만 울렸다면」
+
+
+def gate_table(rows, bases, mid, per_day, cost):
+    """변동폭 문턱마다 5분봉 정규장 알림(몰린 것 하나로)을 앞·뒤 절반에서. 문턱을 앞에서 고르고 뒤에서 확인하려는 것."""
+    base = [r for r in rows if is_alert(r) and main_session(r) and r.get("atr") is not None]
+    halves = (("앞", lambda r: day_of(r) < mid), ("뒤", lambda r: day_of(r) >= mid))
+    trs = []
+    for g in ATR_GATES:
+        tds = ""
+        for _, inside in halves:
+            rs = dedupe([r for r in base if r["atr"] >= g and inside(r)])
+            s = tf.stats(rs, bases, 60)
+            net = {}
+            for h in (60, 120):
+                got = [r[h] for r in rs if r[h] is not None]
+                net[h] = sum(got) / len(got) - cost if got else None
+            hit = "-" if s["hit"] is None else f"{s['hit'] * 100:.0f}%"
+            f = lambda v: "<td class='dim'>-</td>" if v is None else f"<td class='num {'pos' if v > 0 else 'neg'}'>{v:+.2f}</td>"
+            tds += f"<td class='num'>{len(rs)}</td><td class='num'>{hit}</td>{f(net[60])}{f(net[120])}"
+        label = "문턱 없음 (지금)" if g == 0 else f"{g:g}% 넘을 때만"
+        trs.append(f"<tr><th>{label}</th>{tds}</tr>")
+    sub = "<th class='num'>건수</th><th class='num'>60분 맞음</th><th class='num'>60분 비용 뺀%</th><th class='num'>120분 비용 뺀%</th>"
+    return ("<table><thead><tr><th rowspan='2'>변동폭 문턱</th><th colspan='4'>앞 절반</th><th colspan='4'>뒤 절반</th></tr>"
+            f"<tr>{sub}{sub}</tr></thead><tbody>{''.join(trs)}</tbody></table>")
+
+
 # ── 페이지 ────────────────────────────────────────────────────
 CSS = """
 :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6eb; --text:#1b1f24; --muted:#6b7380;
@@ -345,11 +496,28 @@ def build(offline=True, say=print, cost=COST):
 <div class="cols"><div><h2>봉 길이 (모두 합쳐, 60분 뒤)</h2>{split_tf_table(all_rows, bases, mid)}</div>
 <div><h2>종목마다 선 고르기 (5분봉)</h2>{split_pick_table("선", {s: i["lines"] for s, i in info.items()}, "35/65", bases, mid)}</div>
 <div><h2>종목마다 봉 길이 고르기</h2>{split_pick_table("봉", {s: {f"{t}분": rs for t, rs in per.items()} for s, per in per_symb.items()}, "5분", bases, mid)}</div></div></section>""",
+        f"""<section><h2>몰린 알림을 하나로 세면 — 알림, 정규장, 60분 뒤</h2>
+<p class="dim">한 번 크게 움직이면 알림이 연달아 울린다. 같은 종목에서 {DEDUP_MIN}분 안에 또 난 알림을 빼고 센다.
+<b>초과 90% 구간</b>은 날을 한 덩어리로 {BOOT}번 다시 뽑아 셈했다 (같은 날·같은 업종 종목은 같이 움직이니 알림 하나하나를 따로 세면 폭이 너무 좁다).
+구간이 0 위에 있으면(초록) 우연이 아닐 가능성이 높고, 0 을 걸치면(회색) 아직 모른다.</p>
+{dedupe_table(all_rows, bases)}</section>""",
+        f"""<section><h2>비용을 빼면·최대 역행 — 알림, 정규장 (몰린 것 하나로)</h2>
+<p class="dim"><b>비용 뺀%</b> = 평균 − {cost:.2f}%. <b>최대 역행%</b> = 들어간 뒤 그 시간 안에 반대로 가장 멀리 간 폭의 평균 (1분봉 저가·고가).
+맞음 비율이 높아도 역행이 크면 버티기 어렵다.</p>
+{money_table(all_rows, cost)}</section>""",
         f"""<section><h2>변동폭별 — 5분봉 알림, 정규장</h2>
 <p class="dim">변동폭 = 알림 때 그 앞 5분봉 14개의 평균 진폭(고가−저가) ÷ 가격. 알림을 변동폭 순으로 다섯 칸에 나눴다.
 <b>비용 뺀%</b> = 평균 수익 − {cost:.2f}% (사고팔 때 수수료·세금·호가 차이를 합쳐 이만큼 든다고 가정, <code>--cost</code> 로 바꾼다).
 비용을 빼고도 + 인 칸만 있으면 「변동폭이 그 위일 때만 울리기」를 생각할 만하다.</p>
-{atr_table(five, bases, cost)}</section>""",
+{atr_table(five, bases, cost)}
+<h2 style="margin-top:12px">변동폭 문턱을 두었다면 — 몰린 것 하나로, 앞·뒤 절반</h2>
+<p class="dim">「변동폭이 문턱을 넘을 때만 울리기」를 흉내 냈다. 앞 절반에서 비용을 빼고도 + 가 되는 문턱을 고르고, 뒤 절반에서도 + 인지 본다.
+문턱을 높일수록 덜 울린다 (건수).</p>
+{gate_table(five, bases, mid, per_day, cost)}</section>""",
+        f"""<section><h2>거래량별 — 5분봉 알림, 모든 세션 (몰린 것 하나로)</h2>
+<p class="dim">알림 앞 {tf.RVOL_MIN}분 거래량이 그 종목·같은 세션의 보통(중앙값) 몇 배였나 (프리는 프리끼리, 정규는 정규끼리). 거래가 얇으면 종가가 매수·매도 호가 사이를 오가
+RSI 가 끝에 닿았다 돌아오는 것처럼 보이지만, 그 값에 실제로 사고팔기는 어렵다. 얇은 칸의 좋은 성적은 착시일 수 있다.</p>
+{rvol_table(five, cost)}</section>""",
         f"""<section><h2>종목별 선 — 5분봉 알림, 정규장, 60분 뒤</h2>
 <p class="dim">선을 아래/위 둘로 적었다 (강한 선은 5 바깥, 35/65 면 30·35·65·70). ● = 지금 그 종목에 쓰는 선. 파란 바탕 = 초과가 가장 큰 선.
 바깥 선일수록 덜 울리니 「하루」도 같이 본다.</p>
