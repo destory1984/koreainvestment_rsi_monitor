@@ -742,6 +742,8 @@ class MinuteTest(unittest.TestCase):
         self.assertEqual(dv.pivots(v, 2, low=True), [3, 8])
         self.assertEqual(dv.pivots(v, 2, low=False), [6])
         self.assertEqual(dv.pivots([1, 1, 1, 1, 1], 1), [])                  # 같은 값은 저점이 아니다
+        self.assertEqual(dv.pivots([5, 4, 3, 2, 3, 1], 2, right=1), [3])     # 뒤는 1봉만 본다 (R3)
+        self.assertEqual(dv.pivots([5, 4, 3, 2, 3, 1], 2), [])
 
     def test_bullish_divergence(self):
         # 크게 빠져 저점(RSI 낮음) → 반등 → 천천히 조금 더 낮은 저점(RSI 는 덜 낮음) → 반등

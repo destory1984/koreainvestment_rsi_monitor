@@ -37,13 +37,14 @@ class Divergence:
     hidden: bool = False   # 히든 다이버전스 (흐름이 이어진다는 쪽)
 
 
-def pivots(values, k=None, low=True):
-    """values 에서 앞뒤 k 개(없으면 PIVOT_K)보다 엄격히 낮은(low) 또는 높은 점의 번호들."""
+def pivots(values, k=None, low=True, right=None):
+    """values 에서 앞 k 개(없으면 PIVOT_K)·뒤 right 개(없으면 k)보다 엄격히 낮은(low) 또는 높은 점의 번호들."""
     k = PIVOT_K if k is None else k
+    right = k if right is None else right
     out = []
-    for i in range(k, len(values) - k):
+    for i in range(k, len(values) - right):
         v = values[i]
-        side = values[i - k:i] + values[i + 1:i + k + 1]
+        side = values[i - k:i] + values[i + 1:i + right + 1]
         if (low and all(v < x for x in side)) or (not low and all(v > x for x in side)):
             out.append(i)
     return out
@@ -61,8 +62,10 @@ def prev_day_levels(bars):
     return [prev[b["time_us"][:8]] for b in bars]
 
 
-def find(bars, period=14, hidden=False):
-    """닫힌 봉들에서 난 다이버전스 전부 (확인된 차례대로). hidden 이면 히든 다이버전스도 (hidden=True 로 표시)."""
+def find(bars, period=14, hidden=False, right=None):
+    """닫힌 봉들에서 난 다이버전스 전부 (확인된 차례대로). hidden 이면 히든 다이버전스도 (hidden=True 로 표시).
+    right 를 주면 저점·고점의 뒤쪽은 그만큼 봉만 보고 그만큼 일찍 확인한다 (앞쪽은 PIVOT_K 그대로)."""
+    right = PIVOT_K if right is None else right
     closes = [b["close"] for b in bars]
     rsi = k.rsi_series(closes, period)
     _, _, hist = k.macd_series(closes)
@@ -71,7 +74,7 @@ def find(bars, period=14, hidden=False):
     out = []
     for up in (True, False):
         price = [b["low"] if up else b["high"] for b in bars]
-        piv = [p for p in pivots(price, PIVOT_K, low=up) if rsi[p] is not None]
+        piv = [p for p in pivots(price, PIVOT_K, low=up, right=right) if rsi[p] is not None]
         for n, p in enumerate(piv):
             q = next((q for q in reversed(piv[:n]) if MIN_GAP <= p - q <= LOOKBACK), None)
             if q is None:
@@ -91,5 +94,5 @@ def find(bars, period=14, hidden=False):
             if lv and p >= RANGE_N:
                 rng = sum(ranges[p - RANGE_N:p]) / RANGE_N
                 near = abs(price[p] - (lv[0] if up else lv[1])) <= rng / 2
-            out.append(Divergence(p + PIVOT_K, p, q, up, macd, near, kind))
+            out.append(Divergence(p + right, p, q, up, macd, near, kind))
     return sorted(out, key=lambda d: d.confirm)

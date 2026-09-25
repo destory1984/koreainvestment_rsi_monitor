@@ -200,6 +200,7 @@ DIV_RECENT = 12     # 알림 앞 이만큼 봉 안에 같은 쪽 다이버전스
 # 둘 다 안 닿으면 BRACKET_MAX 분 뒤나 그날 마지막 1분봉 종가에 나온다. 한 1분봉에서 둘 다 닿으면 손절로 본다 (나쁜 쪽).
 BRACKET_R = (1.5, 2.0)
 BRACKET_MAX = 390
+R3_RIGHT = 1        # 사전 등록 R3: 저점·고점 뒤쪽은 이만큼 봉만 본다
 
 
 def bracket(minutes, i, up, stop, r_mult, max_min=BRACKET_MAX):
@@ -223,14 +224,15 @@ def bracket(minutes, i, up, stop, r_mult, max_min=BRACKET_MAX):
     return rp.ret(minutes, i, j, up), (rp.ts(minutes[j]["time_us"]) - t0).total_seconds() / 60, "시간", j
 
 
-def divergence_rows(symb, minutes, groups, period, start, kr, atr, rvol, trend, tf=DIV_TF):
+def divergence_rows(symb, minutes, groups, period, start, kr, atr, rvol, trend, tf=DIV_TF, right=None, reverse=False):
     """tf 분봉 다이버전스(히든 포함)를 신호로 채점한 줄들. 신호는 확인 봉의 마지막 1분봉에서 들어간다.
     줄마다 macd(이중), level(전날 저가·고가 근처), hidden, trend(60분 흐름), tf, risk(손절 폭 %),
-    bracket {배수: (수익 %, 보유 분, 어떻게, 나온 1분봉 시각)} 도 붙인다. (줄들, 보통 다이버전스들)"""
-    found = dv.find([b for b, _ in groups], period, hidden=True)
+    bracket {배수: (수익 %, 보유 분, 어떻게, 나온 1분봉 시각)} 도 붙인다. (줄들, 보통 다이버전스들)
+    right 는 저점·고점 뒤쪽 봉 수(dv.find), reverse 면 다이버전스 반대쪽으로 들어간다 (손절·익절은 안 셈)."""
+    found = dv.find([b for b, _ in groups], period, hidden=True, right=right)
     use = [d for d in found if groups[d.confirm][1][-1] >= start]
-    events = [{"i": groups[d.confirm][1][-1], "up": d.up, "rsi": 0.0,
-               "kind": ("히든 " if d.hidden else "다이버전스 ") + ("상승" if d.up else "하락")} for d in use]
+    name = lambda d: ("거꾸로 " if reverse else "") + ("히든 " if d.hidden else "다이버전스 ") + ("상승" if d.up else "하락")
+    events = [{"i": groups[d.confirm][1][-1], "up": d.up != reverse, "rsi": 0.0, "kind": name(d)} for d in use]
     rows = scored(symb, minutes, events, kr, atr, rvol)
     for r, d, e in zip(rows, use, events):
         piv = groups[d.pivot][0]
@@ -238,7 +240,7 @@ def divergence_rows(symb, minutes, groups, period, start, kr, atr, rvol, trend, 
         p0 = minutes[e["i"]]["close"]
         r.update(macd=d.macd, level=d.level, hidden=d.hidden, trend=trend[e["i"]], tf=tf,
                  risk=abs(p0 - stop) / p0 * 100, bracket={})
-        for m in BRACKET_R:
+        for m in () if reverse else BRACKET_R:
             ret, hold, how, x = bracket(minutes, e["i"], d.up, stop, m)
             r["bracket"][m] = (ret, hold, how, rp.ts(minutes[x]["time_us"]))
     return rows, [d for d in found if not d.hidden]
@@ -338,6 +340,10 @@ def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None, diverge=Fa
             extra["div_tf"][dtf], f = divergence_rows(symb, minutes, aggregate(minutes, dtf), period, start, kr, atr, rvol, trend, dtf)
             if dtf == DIV_TF:
                 extra["div"], found = extra["div_tf"][dtf], f
+        # 사전 등록 규칙 (NOTES): R1 보통 다이버전스 반대쪽으로, R3 저점·고점 뒤쪽 1봉만 보고 일찍 확인
+        g5 = aggregate(minutes, DIV_TF)
+        extra["r1"] = divergence_rows(symb, minutes, g5, period, start, kr, atr, rvol, trend, DIV_TF, reverse=True)[0]
+        extra["r3"] = divergence_rows(symb, minutes, g5, period, start, kr, atr, rvol, trend, DIV_TF, right=R3_RIGHT)[0]
         extra["cardwell"] = cardwell_rows(symb, minutes, g, period, start, kr, atr, rvol, trend)
         extra["rsi2"] = rsi2_rows(symb, minutes, g, start, kr, atr, rvol)
     for tf in tfs:
@@ -437,7 +443,9 @@ def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, l
             all_rows[tf] += rs
         info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2],
                       "lines": extra.get("lines", {}), "div": extra.get("div", []), "div_tf": extra.get("div_tf", {}),
-                      "cardwell": extra.get("cardwell", []), "rsi2": extra.get("rsi2", []), "now": rp.lines_for(symb, lines)}
+                      "cardwell": extra.get("cardwell", []), "rsi2": extra.get("rsi2", []), "now": rp.lines_for(symb, lines),
+                      "r1": extra.get("r1", []), "r3": extra.get("r3", []),
+                      "day_list": sorted({m["time_us"][:8] for m in minutes if m["time_us"][:8] >= span[0]})}
         name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
         say(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "
               + " ".join(f"{tf}분 {len(rs)}" for tf, rs in rows.items()))

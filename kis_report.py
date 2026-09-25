@@ -16,8 +16,11 @@ kis_report.py — 채점 보고서 페이지를 만든다 (replay_cache/report.h
   python kis_report.py              쌓아 둔 1분봉으로 (새로 받지 않는다, 13종목 40초쯤)
   python kis_report.py --fetch      1분봉을 이어 받은 뒤
   python kis_report.py --open       다 만들면 브라우저로 열기
+  python kis_report.py --since 20260928 --set new
+                                    이 날부터만, 새 종목(kis_collect.json)만 채점한다 (사전 등록 규칙 판정용)
 """
 import argparse
+import json
 import html
 import math
 import sys
@@ -612,12 +615,68 @@ table.in td { border:0; padding:0 4px; } td.wrap { padding:2px 4px; }
 """
 
 
-def build(offline=True, say=print, cost=COST):
-    tf.k.load_kr_market()
+PREREG_SINCE = "20260928"   # 사전 등록 규칙을 적은 뒤 처음 열린 날. 이 날부터가 규칙을 만들 때 안 본 데이터
+SETS = ("all", "new", "watch")
+
+
+def pick_tickers(which):
+    """all = 모니터링 + kis_collect.json, new = kis_collect.json 만(09-28 부터 쌓은 종목), watch = 모니터링 목록만."""
     tickers = rp.collect_tickers()
+    if which == "all":
+        return tickers
+    extra = {t.upper() for t in json.loads(rp.COLLECT_EXTRA.read_text(encoding="utf-8"))} if rp.COLLECT_EXTRA.exists() else set()
+    return [t for t in tickers if (t in extra) == (which == "new")]
+
+
+def cut_since(since, all_rows, per_symb, ndays, info):
+    """since(YYYYMMDD) 전 날의 줄을 모두 뺀다. RSI 는 그 전 봉으로 셈한 그대로다. 기준(bases)은 전체 기간 것을 쓴다."""
+    keep = lambda rs: [r for r in rs if day_of(r) >= since]
+    all_rows = {t: keep(rs) for t, rs in all_rows.items()}
+    for s_ in list(info):
+        i = info[s_]
+        i["day_list"] = [d for d in i["day_list"] if d >= since]
+        if not i["day_list"]:
+            del info[s_], per_symb[s_], ndays[s_]
+            continue
+        per_symb[s_] = {t: keep(rs) for t, rs in per_symb[s_].items()}
+        for key in ("div", "cardwell", "rsi2", "r1", "r3"):
+            i[key] = keep(i.get(key, []))
+        i["div_tf"] = {t: keep(rs) for t, rs in i.get("div_tf", {}).items()}
+        i["lines"] = {n: keep(rs) for n, rs in i.get("lines", {}).items()}
+        i["from"], ndays[s_] = i["day_list"][0], len(i["day_list"])
+        i["days"] = ndays[s_]
+    return all_rows, per_symb, ndays, info
+
+
+def prereg_section(info, all_rows, bases, mid, per_day, cost, since, which):
+    five = [r for r in all_rows.get(tf.DIV_TF, []) if is_alert(r) and main_session(r)]
+    pick = lambda key: [r for i in info.values() for r in i.get(key, []) if main_session(r)]
+    div, r1, r3 = pick("div"), pick("r1"), pick("r3")
+    groups = [
+        ("R1 거꾸로 타기 (보통 다이버전스 반대쪽)", [r for r in r1 if not r["hidden"]]),
+        ("R2 흐름 쪽 히든 (5분봉)", [r for r in div if r["hidden"] and with_trend(r)]),
+        (f"R3 확인 늦음 줄이기 (뒤 {tf.R3_RIGHT}봉만 보고 확인)", [r for r in r3 if not r["hidden"]]),
+        ("  · 참고: 보통 다이버전스 (뒤 3봉)", [r for r in div if not r["hidden"]]),
+        ("  · 참고: 지금 5분봉 알림", five),
+    ]
+    fresh = since and since >= PREREG_SINCE
+    warn = ("" if fresh else
+            f"<p class='neg'><b>판정용 아님</b> — 이 보고서엔 규칙을 만들 때 본 날이 섞여 있다. "
+            f"<code>python kis_report.py --since {PREREG_SINCE}</code> (새 종목만이면 <code>--set new</code> 도) 로 만든 것으로만 판정한다.</p>")
+    return (f"""<section><h2>사전 등록 규칙 — R1·R2·R3, 5분봉 정규장 (몰린 것 하나로)</h2>
+<p class="dim">09-26 에 값까지 적어 둔 규칙 (NOTES 「사전 등록」). 종목: {html.escape(which)}, 날: {since or '전체'}부터.
+통과하려면 60분 초과의 90% 구간이 0 위(초록)이고, 비용 뺀 60·120분이 + 여야 한다. 앞·뒤 절반도 같이 본다.</p>
+{warn}{verdict_table(groups, bases, mid, per_day, cost)}</section>""")
+
+
+def build(offline=True, say=print, cost=COST, since=None, which="all"):
+    tf.k.load_kr_market()
+    tickers = pick_tickers(which)
     all_rows, bases, per_symb, ndays, info = tf.analyze(tickers, tf.TFS, offline=offline, say=say,
                                                         line_sets=tf.LINE_SETS, diverge=True)
-    if not all_rows:
+    if since:
+        all_rows, per_symb, ndays, info = cut_since(since, all_rows, per_symb, ndays, info)
+    if not any(all_rows.values()):
         raise SystemExit("채점할 것이 없다 (1분봉이 없다 — --fetch 로 받거나 수집을 기다린다).")
     per_day = sum(ndays.values())   # 종목 하나 하루
     days = [i["from"] for i in info.values()] + [i["to"] for i in info.values()]
@@ -629,11 +688,12 @@ def build(offline=True, say=print, cost=COST):
                    key=lambda kd: (0 if "미만" in kd else 1, float(kd.split()[1])))
     sections = [
         f"""<section><h1>채점 보고서</h1>
-<p class="dim">{len(info)}종목, {span} (종목마다 앞 {tf.WARMUP_DAYS}거래일은 RSI 자리 잡기로 뺌). 주간거래 시간은 뺐다.
+<p class="dim">{len(info)}종목 ({which}), {span} (종목마다 앞 {tf.WARMUP_DAYS}거래일은 RSI 자리 잡기로 뺌{f", {since} 전 날은 뺌 — 기준은 전체 기간" if since else ""}). 주간거래 시간은 뺐다.
 만든 때 {datetime.now():%Y-%m-%d %H:%M}.</p>
 <p><b>맞음</b> = 알림이 말한 쪽으로 간 비율 (보합 뺌). <b>초과%</b> = 평균 수익 − 아무 때나 같은 쪽으로 들어간 평균.
 <b>하루</b> = 종목 하나가 하루에 울리는 횟수. 굵게 칠한 칸만 동전 던지기 폭(±2σ)을 넘었다 — 나머지는 우연일 수 있다.
 ★ = 60분 뒤 초과가 가장 큰 봉 길이.</p></section>""",
+        prereg_section(info, all_rows, bases, mid, per_day, cost, since, which),
         f"""<div class="cols"><section><h2>봉 길이 — 알림, 미국 정규장·국내</h2>
 {tf_table(all_rows, bases, per_day, lambda r: is_alert(r) and main_session(r))}</section>
 <section><h2>봉 길이 — 알림, 모든 세션</h2>
@@ -726,8 +786,10 @@ def main():
     ap.add_argument("--fetch", action="store_true", help="1분봉을 이어 받은 뒤 만들기")
     ap.add_argument("--open", action="store_true", help="다 만들면 브라우저로 열기")
     ap.add_argument("--cost", type=float, default=COST, help=f"사고팔 때 드는 비용 가정, %% 왕복 (기본 {COST})")
+    ap.add_argument("--since", metavar="YYYYMMDD", help=f"이 날부터만 채점 (사전 등록 규칙 판정은 {PREREG_SINCE} 부터)")
+    ap.add_argument("--set", choices=SETS, default="all", help="종목: all(기본) / new(kis_collect.json) / watch(모니터링 목록)")
     args = ap.parse_args()
-    out = build(offline=not args.fetch, cost=args.cost)
+    out = build(offline=not args.fetch, cost=args.cost, since=args.since, which=args.set)
     print(f"\n{out} 에 썼다. 웹 서버가 켜져 있으면 http://localhost:8000/report")
     if args.open:
         webbrowser.open(out.resolve().as_uri())
