@@ -107,6 +107,45 @@ def grid(per_symb, bases, info, tfs, h=60):
             f"<tbody>{''.join(trs)}</tbody></table>")
 
 
+def lines_table(info, bases, h=60):
+    """종목 × 선: 5분봉 정규장 알림의 하루 몇 번·h 분 뒤 맞음·초과. 종목마다 초과가 가장 큰 선에 표시, 지금 쓰는 선에 ●."""
+    names = list(tf.LINE_SETS)
+    ths = "".join(f"<th colspan='3'>{n}</th>" for n in names)
+    sub = "".join("<th class='num'>하루</th><th class='num'>맞음</th><th class='num'>초과%</th>" for _ in names)
+    total = {n: [] for n in names}
+    trs = []
+
+    def row(label, per, days, now=None):
+        tds, best, best_ex = [], None, None
+        for n in names:
+            rs = [r for r in per.get(n, []) if main_session(r)]
+            ex = tf.stats(rs, bases, h)["excess"] if rs else None
+            if ex is not None and (best_ex is None or ex > best_ex):
+                best, best_ex = n, ex
+            tds.append((n, rs))
+        cells = ""
+        for n, rs in tds:
+            mark = " best" if n == best else ""
+            dot = " ●" if n == now else ""
+            cells += (f"<td class='num{mark}'>{len(rs) / days:.1f}{dot}</td>"
+                      + (cell(rs, bases, h).replace("<td class=\"num", f"<td class=\"num{mark}") if rs
+                         else f"<td class='dim{mark}'>-</td><td class='dim{mark}'>-</td>"))
+        return f"<tr><th>{label}</th>{cells}</tr>"
+
+    all_days = 0
+    for symb, i in info.items():
+        per = i.get("lines") or {}
+        now = next((n for n, (lo, up) in tf.LINE_SETS.items() if (i["now"].lower, i["now"].upper) == (lo, up)), None)
+        name = html.escape(tf.k.KR_INFO.get(symb, {}).get("name", symb))
+        trs.append(row(name, per, i["days"], now))
+        for n in names:
+            total[n] += per.get(n, [])
+        all_days += i["days"]
+    trs.insert(0, row("<b>모두</b>", total, all_days or 1))
+    return (f"<table><thead><tr><th rowspan='2'>종목</th>{ths}</tr><tr>{sub}</tr></thead>"
+            f"<tbody>{''.join(trs)}</tbody></table>")
+
+
 def kind_table(rows, bases, per_day, key, order=None):
     groups = {}
     for r in rows:
@@ -166,7 +205,8 @@ table.in td { border:0; padding:0 4px; } td.wrap { padding:2px 4px; }
 
 def build(offline=True, say=print):
     tickers = rp.collect_tickers()
-    all_rows, bases, per_symb, ndays, info = tf.analyze(tickers, tf.TFS, offline=offline, say=say)
+    all_rows, bases, per_symb, ndays, info = tf.analyze(tickers, tf.TFS, offline=offline, say=say,
+                                                        line_sets=tf.LINE_SETS)
     if not all_rows:
         raise SystemExit("채점할 것이 없다 (1분봉이 없다 — --fetch 로 받거나 수집을 기다린다).")
     per_day = sum(ndays.values())   # 종목 하나 하루
@@ -196,6 +236,10 @@ def build(offline=True, say=print):
         f"""<section><h2>종목 × 봉 길이 — 알림, 정규장, 60분 뒤</h2>
 <p class="dim">칸마다 맞음%·초과%. 파란 바탕 = 그 종목에서 초과가 가장 큰 봉 길이. 건수가 적은 종목은 흔들림이 크다 (칸에 마우스를 올리면 건수).</p>
 {grid(per_symb, bases, info, list(all_rows))}</section>""",
+        f"""<section><h2>종목별 선 — 5분봉 알림, 정규장, 60분 뒤</h2>
+<p class="dim">선을 아래/위 둘로 적었다 (강한 선은 5 바깥, 35/65 면 30·35·65·70). ● = 지금 그 종목에 쓰는 선. 파란 바탕 = 초과가 가장 큰 선.
+바깥 선일수록 덜 울리니 「하루」도 같이 본다.</p>
+{lines_table(info, bases)}</section>""",
         f"""<div class="cols"><section><h2>5분봉 (지금 쓰는 것) — 종류별, 정규장</h2>
 {kind_table([r for r in five if main_session(r)], bases, per_day, lambda r: r["kind"],
             kinds + ["매수 강", "매수 약", "매도 강", "매도 약"])}</section>

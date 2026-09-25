@@ -49,6 +49,9 @@ except Exception:
 TFS = (1, 3, 5, 10, 15, 30, 60)
 HORIZONS = (15, 30, 60, 120)
 WARMUP_DAYS = 5
+# 종목별 선을 정할 때 견줄 선들 (이름 → [아래, 위], 강한 선은 5 바깥). 봉 길이는 서버와 같은 5분.
+LINE_SETS = {"35/65": [35, 65], "30/70": [30, 70], "25/75": [25, 75]}
+LINE_TF = 5
 
 
 def load_minutes(con, appkey, secret, excd, symb, offline):
@@ -125,11 +128,11 @@ def walk_signals(groups, period, lines):
             for x in ks.signals(bars[:-1], period, lines=lines)]
 
 
-def run_ticker(symb, minutes, tfs, period, lines, kr):
-    """봉 길이마다 채점 줄들, 그리고 기준."""
+def run_ticker(symb, minutes, tfs, period, lines, kr, line_sets=None):
+    """봉 길이마다 채점 줄들, 기준, (채점 첫날, 끝날, 날 수), 그리고 line_sets 의 선마다 LINE_TF 분봉 알림 채점 줄들."""
     days = sorted({m["time_us"][:8] for m in minutes})
     if len(days) <= WARMUP_DAYS:
-        return {}, {}, None
+        return {}, {}, None, {}
     start_day = days[WARMUP_DAYS]
     start = next(i for i, m in enumerate(minutes) if m["time_us"][:8] >= start_day)
     rows = {}
@@ -138,9 +141,15 @@ def run_ticker(symb, minutes, tfs, period, lines, kr):
         events = walk_alerts(minutes, groups, period, lines) + walk_signals(groups, period, lines)
         events = [e for e in events if e["i"] >= start]
         rows[tf] = rp.score(symb, minutes, events, HORIZONS, kr)
+    by_lines = {}
+    if line_sets:
+        groups = aggregate(minutes, LINE_TF)
+        for name, ln in line_sets.items():
+            events = [e for e in walk_alerts(minutes, groups, period, al.Lines.parse(ln)) if e["i"] >= start]
+            by_lines[name] = rp.score(symb, minutes, events, HORIZONS, kr)
     # 기준: 채점 구간의 아무 분에서나 (WARMUP 봉은 이미 앞에서 지났으니 0 부터)
     base = baseline(minutes[start:], kr)
-    return rows, base, (start_day, days[-1], len(days) - WARMUP_DAYS)
+    return rows, base, (start_day, days[-1], len(days) - WARMUP_DAYS), by_lines
 
 
 def baseline(minutes, kr):
@@ -184,9 +193,10 @@ def table(title, rows_by_tf, bases, ndays, pick=None):
         print(f"{tf:>3}분{len(rs):>6}{per_day:>6.1f}  " + "".join(f"{'':>3}{fmt(stats(rs, bases, h))}" for h in HORIZONS))
 
 
-def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print):
+def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print, line_sets=None):
     """종목마다 1분봉을 (이어 받아) 봉 길이별로 채점한다.
-    (봉 길이 -> 모든 종목 채점 줄, 종목 -> 기준, 종목 -> {봉 길이: 줄}, 종목 -> 채점 날 수, 종목 -> 정보)."""
+    (봉 길이 -> 모든 종목 채점 줄, 종목 -> 기준, 종목 -> {봉 길이: 줄}, 종목 -> 채점 날 수, 종목 -> 정보).
+    line_sets 를 주면 정보에 "lines": {선 이름: 줄} 도 (LINE_TF 분봉 알림만)."""
     appkey = secret = None
     if not offline:
         appkey, secret = k.load_keys()
@@ -209,14 +219,15 @@ def analyze(tickers, tfs=TFS, period=14, lines=None, offline=False, say=print):
             say(f"{symb}: 1분봉 없음 (수집을 기다린다)")
             continue
         kr = excd == "KRX"
-        rows, base, span = run_ticker(symb, minutes, tfs, period, rp.lines_for(symb, lines), kr)
+        rows, base, span, by_lines = run_ticker(symb, minutes, tfs, period, rp.lines_for(symb, lines), kr, line_sets)
         if not span:
             say(f"{symb}: 날이 모자람 ({len(minutes)} 분)")
             continue
         bases[symb], per_symb[symb], ndays[symb] = base, rows, span[2]
         for tf, rs in rows.items():
             all_rows[tf] += rs
-        info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2]}
+        info[symb] = {"excd": excd, "minutes": len(minutes), "from": span[0], "to": span[1], "days": span[2],
+                      "lines": by_lines, "now": rp.lines_for(symb, lines)}
         name = k.KR_INFO.get(symb, {}).get("name", symb) if kr else symb
         say(f"{name:<8} 1분봉 {len(minutes):>6}  채점 {span[0]}~{span[1]} ({span[2]}일)  "
               + " ".join(f"{tf}분 {len(rs)}" for tf, rs in rows.items()))
