@@ -505,6 +505,40 @@ class KrBarsTest(unittest.TestCase):
         self.assertEqual(times[-1], "1530")                     # 종가 단일가 봉까지
         self.assertEqual(len(bars), 77)
 
+    def test_unified_market_keeps_nextrade(self):
+        day = "20260923"
+        minutes = [f"{h:02d}{m:02d}00" for h in range(8, 20) for m in range(60)
+                   if not ((8, 50) <= (h, m) < (9, 0))]
+        minutes.reverse()
+        pages = [minutes[i:i + 120] for i in range(0, len(minutes), 120)]
+        codes = []
+
+        def get(url, headers, params, timeout):
+            codes.append(params["FID_COND_MRKT_DIV_CODE"])
+            page = pages.pop(0) if pages else []
+            out = [{"stck_bsop_date": day, "stck_cntg_hour": t, "stck_prpr": "100", "stck_oprc": "100",
+                    "stck_hgpr": "100", "stck_lwpr": "100", "cntg_vol": "1"} for t in page]
+            return types.SimpleNamespace(json=lambda: {"rt_cd": "0", "output1": {}, "output2": out},
+                                         raise_for_status=lambda: None)
+        self.addCleanup(k.set_kr_market, "krx")
+        self.assertEqual(k.set_kr_market("unified"), "unified")
+        self.assertEqual(k.KR_TR, "H0UNCNT0")
+        with mock.patch.object(k, "get_token", lambda *a: "t"), mock.patch.object(k.requests, "get", get), \
+                mock.patch.object(k.time, "sleep", lambda s: None):
+            bars = k.fetch_kr_bars("a", "s", "005930", 5, need=500)
+        times = [b["time_us"][9:13] for b in bars]
+        self.assertEqual((times[0], times[-1]), ("0800", "1955"))
+        self.assertEqual(set(codes), {"UN"})
+        self.assertEqual(k.set_kr_market("모름"), "krx")                  # 모르는 이름이면 KRX
+        self.assertEqual((k.KR_TR, k.KR_CODE, k.KR_CLOSE), ("H0STCNT0", "J", "153059"))
+
+    def test_load_kr_market_from_settings(self):
+        self.addCleanup(k.set_kr_market, "krx")
+        path = temp_path(".json")
+        path.write_text('{"kr_market": "unified"}', encoding="utf-8")
+        self.assertEqual(k.load_kr_market(path), "unified")
+        self.assertEqual(k.load_kr_market(temp_path(".json")), "krx")   # 파일이 없으면 KRX
+
 
 # ── 텔레그램 ───────────────────────────────────────────────────
 class TelegramTest(unittest.TestCase):

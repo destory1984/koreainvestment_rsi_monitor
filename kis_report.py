@@ -204,6 +204,7 @@ table.in td { border:0; padding:0 4px; } td.wrap { padding:2px 4px; }
 
 
 def build(offline=True, say=print):
+    tf.k.load_kr_market()
     tickers = rp.collect_tickers()
     all_rows, bases, per_symb, ndays, info = tf.analyze(tickers, tf.TFS, offline=offline, say=say,
                                                         line_sets=tf.LINE_SETS)

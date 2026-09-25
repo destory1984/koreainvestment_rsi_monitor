@@ -42,11 +42,11 @@ DAY_EXCD = {"NAS": "BAQ", "NYS": "BAY", "AMS": "BAA"}   # 미국 주간거래(�
 NEW_YORK = ZoneInfo("America/New_York")
 
 # HDFSCNT0 (해외주식 실시간체결가) 필드 순서
-US_TR, KR_TR = "HDFSCNT0", "H0STCNT0"
+US_TR = "HDFSCNT0"
 LIVE_FIELDS = ["RSYM", "SYMB", "ZDIV", "TYMD", "XYMD", "XHMS", "KYMD", "KHMS", "OPEN", "HIGH",
                "LOW", "LAST", "SIGN", "DIFF", "RATE", "PBID", "PASK", "VBID", "VASK",
                "EVOL", "TVOL", "TAMT", "BIVL", "ASVL", "STRN", "MTYP"]
-# H0STCNT0 (국내주식 실시간체결가, KRX) 필드 순서
+# H0STCNT0 (국내주식 실시간체결가, KRX) 필드 순서. 통합(H0UNCNT0)·넥스트레이드(H0NXCNT0)도 같다
 KR_FIELDS = ["MKSC_SHRN_ISCD", "STCK_CNTG_HOUR", "STCK_PRPR", "PRDY_VRSS_SIGN", "PRDY_VRSS",
              "PRDY_CTRT", "WGHN_AVRG_STCK_PRC", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "ASKP1",
              "BIDP1", "CNTG_VOL", "ACML_VOL", "ACML_TR_PBMN", "SELN_CNTG_CSNU", "SHNU_CNTG_CSNU",
@@ -185,13 +185,47 @@ def merge_bars(bars, day):
     return [merged[t] for t in sorted(merged)]
 
 
-KRX_OPEN, KRX_CLOSE = "090000", "153059"   # 국내 분봉을 남기는 시각 (1분봉 시각, 끝 포함)
+# 국내 시장: KRX 만(정규장 09:00~15:30 종가 단일가) 또는 통합(KRX + 넥스트레이드 프리 08:00~08:50·애프터 15:30~20:00).
+# 설정 "kr_market" 으로 고르고 서버를 다시 켠다. 실시간·분봉·분봉을 남기는 시각(1분봉 시각, 끝 포함)이 같이 바뀐다.
+# 실시간과 분봉이 같은 시장이어야 켜 둔 서버와 새로 켠 서버의 RSI 가 같다.
+KR_MARKETS = {"krx": {"tr": "H0STCNT0", "code": "J", "open": "090000", "close": "153059"},
+              "unified": {"tr": "H0UNCNT0", "code": "UN", "open": "080000", "close": "195959"}}
+KR_TRS = {m["tr"] for m in KR_MARKETS.values()}
+KR_MARKET = KR_TR = KR_CODE = KR_OPEN = KR_CLOSE = None
+
+
+def set_kr_market(name):
+    """국내 시장을 고른다 ("krx" / "unified", 모르는 이름이면 "krx"). 고른 이름을 돌려준다."""
+    global KR_MARKET, KR_TR, KR_CODE, KR_OPEN, KR_CLOSE
+    KR_MARKET = name if name in KR_MARKETS else "krx"
+    m = KR_MARKETS[KR_MARKET]
+    KR_TR, KR_CODE, KR_OPEN, KR_CLOSE = m["tr"], m["code"], m["open"], m["close"]
+    return KR_MARKET
+
+
+def load_kr_market(path=None):
+    """kis_settings.json 의 "kr_market" 대로 고른다 (되감기·수집·보고서가 서버와 같은 시장을 보게)."""
+    try:
+        name = json.loads((path or HERE / "kis_settings.json").read_text(encoding="utf-8")).get("kr_market")
+    except Exception:
+        name = None
+    return set_kr_market(name or "krx")
+
+
+
+def kr_minutes():
+    """고른 국내 시장의 하루 1분봉 수 (KRX 391, 통합 720)."""
+    m = lambda t: int(t[:2]) * 60 + int(t[2:4])
+    return m(KR_CLOSE) - m(KR_OPEN) + 1
+
+
+set_kr_market("krx")
 
 
 def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
     """국내주식 1분봉(FHKST03010230, 한 번에 120개)을 거슬러 받아 nmin 분봉으로 묶는다.
-    KRX 정규장(09:00~15:30 종가 단일가)만 남긴다. 분봉에는 넥스트레이드 애프터(15:30~20:00)도 오지만
-    실시간(H0STCNT0)은 KRX 만이라, 넣으면 켜 둔 서버와 새로 켠 서버의 RSI 가 달라진다."""
+    KR_OPEN~KR_CLOSE 만 남긴다 (KRX 면 정규장, 통합이면 08:00~20:00). KRX 로 받아도 넥스트레이드 애프터
+    (15:30~20:00) 봉이 섞여 오지만 KRX 실시간(H0STCNT0)엔 없어, 넣으면 켜 둔 서버와 새로 켠 서버의 RSI 가 달라진다."""
     token = get_token(appkey, secret)
     now = datetime.now()
     date, hour = now.strftime("%Y%m%d"), "200000"
@@ -200,7 +234,7 @@ def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
         r = requests.get(f"{REST}/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
                          headers={"authorization": f"Bearer {token}", "appkey": appkey,
                                   "appsecret": secret, "tr_id": "FHKST03010230", "custtype": "P"},
-                         params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+                         params={"FID_COND_MRKT_DIV_CODE": KR_CODE, "FID_INPUT_ISCD": code,
                                  "FID_INPUT_HOUR_1": hour, "FID_INPUT_DATE_1": date,
                                  "FID_PW_DATA_INCU_YN": "Y", "FID_FAKE_TICK_INCU_YN": ""},
                          timeout=10)
@@ -215,7 +249,7 @@ def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
         page = [b for b in j.get("output2") or [] if b.get("stck_prpr")]
         if not page:
             break
-        mins += [b for b in page if KRX_OPEN <= b["stck_cntg_hour"] <= KRX_CLOSE]
+        mins += [b for b in page if KR_OPEN <= b["stck_cntg_hour"] <= KR_CLOSE]
         last = page[-1]  # 가장 이른 것
         t = datetime.strptime(last["stck_bsop_date"] + last["stck_cntg_hour"], "%Y%m%d%H%M%S")
         t = t.replace(second=0) - timedelta(minutes=1)
@@ -481,7 +515,7 @@ async def live(approval_key, keys, on_tick=print_tick, on_open=None):
         async for msg in ws:
             if msg[0] in "01":  # 데이터: 암호화|TR|건수|필드^필드^...
                 _, tr_id, count, data = msg.split("|", 3)
-                fields = KR_FIELDS if tr_id == KR_TR else LIVE_FIELDS
+                fields = KR_FIELDS if tr_id in KR_TRS else LIVE_FIELDS
                 vals, count, n = data.split("^"), int(count), len(fields)
                 skip = 1 if len(vals) == count * (n + 1) else 0  # 앞에 구독 키가 한 칸 더 붙어 오면
                 for i in range(count):

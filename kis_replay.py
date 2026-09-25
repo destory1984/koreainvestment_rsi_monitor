@@ -250,8 +250,8 @@ def topup_minutes(con, appkey, secret, excd, symb, night=False):
     마지막 봉이 든 쪽까지 다시 받아 덮어쓴다 — 받을 때 진행 중이던 봉을 고치려고."""
     if excd == "KRX":
         last = last_minute(con, excd, symb, False)
-        days = MIN_DAYS if not last else min(MIN_DAYS, (datetime.now() - ts(last)).days + 1)
-        got = k.fetch_kr_bars(appkey, secret, symb, 1, need=days * 391)
+        days = MIN_DAYS if not last else min(MIN_DAYS, (datetime.now().date() - ts(last).date()).days + 1)
+        got = k.fetch_kr_bars(appkey, secret, symb, 1, need=days * k.kr_minutes())
     else:
         last = last_minute(con, excd, symb, night)
         src = k.DAY_EXCD[excd] if night else excd
@@ -337,7 +337,7 @@ def load_bars(con, appkey, secret, excd, symb, nmin, days, offline):
         con.commit()
     bars = get_bars(con, excd, symb, nmin)
     if excd == "KRX":
-        return [b for b in bars if b["time_us"][9:] <= k.KRX_CLOSE], False
+        return [b for b in bars if k.KR_OPEN <= b["time_us"][9:] <= k.KR_CLOSE], False
     night = get_night(con, excd, symb, nmin)
     if not night:
         bars = [b for b in bars if session(ts(b["time_us"])) != "주간"]
@@ -502,6 +502,7 @@ def main():
     ap.add_argument("--offline", action="store_true", help="새로 받지 않고 replay_cache 만 쓰기")
     ap.add_argument("--collect", action="store_true", help="주간거래 분봉만 받아 쌓고 끝내기")
     args = ap.parse_args()
+    k.load_kr_market()   # 국내를 서버와 같은 시장(KRX / 통합)으로
 
     if args.collect:
         return collect(args.tickers or collect_tickers(), args.min)

@@ -69,6 +69,8 @@ class Hub:
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
         self.settings.setdefault("lines", {})        # 종목 -> [강한 아래, 아래, 위, 강한 위]. 없으면 기본 30·35·65·70
+        self.settings.setdefault("kr_market", "krx")  # 국내: "krx"(정규장) / "unified"(넥스트레이드 포함 08:00~20:00)
+        k.set_kr_market(self.settings["kr_market"])  # 켤 때 한 번. 바꾸면 다시 켜야 한다
         self.tg = tg.Telegram()
         self.signals = {}         # 종목 -> 닫힌 봉들에서 난 시그널 전부
         self.closed = set()       # 새 봉이 생겨 앞 봉이 닫힌 종목
@@ -152,7 +154,7 @@ class Hub:
             print(f"{symb}: DB 에서 지난 봉을 못 읽음 — {e}", flush=True)
             return []
         if excd == "KRX":
-            return [b for b in old if k.KRX_OPEN <= b["time_us"][9:] <= k.KRX_CLOSE]
+            return [b for b in old if k.KR_OPEN <= b["time_us"][9:] <= k.KR_CLOSE]
         if not night_on:
             return [b for b in old if rp.session(rp.ts(b["time_us"])) != "주간"]
         return old
@@ -732,6 +734,7 @@ class Hub:
                 "sound_sessions": self.settings["sound_sessions"], "quiet": self.settings["quiet"],
                 "session_names": SOUND_SESSIONS, "holidays": self.holidays(),
                 "telegram": {"ready": self.tg.ready, "on": self.settings["telegram"], "error": self.tg.last_error},
+                "kr_market": {"want": self.settings["kr_market"], "now": k.KR_MARKET},
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -935,6 +938,14 @@ def api_telegram(on: bool = Body(..., embed=True)):
     hub.settings["telegram"] = bool(on)
     hub.save_settings()
     return {"on": hub.settings["telegram"], "ready": hub.tg.ready}
+
+
+@app.post("/api/kr-market")
+def api_kr_market(unified: bool = Body(..., embed=True)):
+    """국내를 넥스트레이드까지 볼지. 실시간 구독·분봉이 바뀌어 서버를 다시 켜야 적용된다."""
+    hub.settings["kr_market"] = "unified" if unified else "krx"
+    hub.save_settings()
+    return {"want": hub.settings["kr_market"], "now": k.KR_MARKET}
 
 
 @app.post("/api/telegram/test")

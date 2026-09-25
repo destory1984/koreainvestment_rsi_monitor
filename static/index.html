@@ -186,6 +186,9 @@
     <span class="mbtns"><button class="hbtn" id="tgtest" title="시험 메시지를 한 번 보낸다">보내 보기</button>
     <button class="switch" id="telegram" role="switch" aria-checked="false" aria-label="텔레그램으로 보내기"></button></span></div>
   <p class="more" hidden>선 알림·시그널이 울릴 때 텔레그램으로도 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다.</p>
+  <div class="mrow"><span class="mlabel"><span>국내 넥스트레이드 <button type="button" class="info" aria-expanded="false" title="켜면 국내 종목을 KRX 와 넥스트레이드를 합친 통합 시세로 본다. 실시간(H0UNCNT0)과 분봉이 모두 통합이 되고, 프리마켓 08:00~08:50 과 애프터마켓 15:30~20:00 에도 RSI 가 움직이고 알림이 난다. 끄면 KRX 정규장(09:00~15:30)만. 실시간 구독과 분봉이 바뀌니 서버를 다시 켜야 적용된다." aria-label="자세히">ⓘ</button></span><small id="krnote">08:00~20:00 통합 시세</small></span>
+    <button class="switch" id="krmarket" role="switch" aria-checked="false" aria-label="국내 넥스트레이드 포함"></button></div>
+  <p class="more" hidden>켜면 국내 종목을 KRX 와 넥스트레이드를 합친 통합 시세로 본다. 실시간(H0UNCNT0)과 분봉이 모두 통합이 되고, 프리마켓 08:00~08:50 과 애프터마켓 15:30~20:00 에도 RSI 가 움직이고 알림이 난다. 끄면 KRX 정규장(09:00~15:30)만. 실시간 구독과 분봉이 바뀌니 서버를 다시 켜야 적용된다.</p>
   <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
 </div>
 <div id="markets"></div>
@@ -785,12 +788,17 @@ function usSession() {
   return ["애프터", H(early ? 17 : 20), true];
 }
 
-// 한국은 서울 시각. 정규장 09:00~15:30, 그 앞뒤 시간외
+// 한국은 서울 시각. 정규장 09:00~15:30, 그 앞뒤 시간외.
+// 넥스트레이드까지 보면(서버가 지금 쓰는 kr_market 이 unified) 프리마켓 08:00~08:50, 애프터마켓 15:30~20:00
 function krSession() {
   const { wd, min, ymd } = clock("Asia/Seoul");
   const H = h => h * 60;
   if (wd === 0 || wd === 6) return ["휴장", 0, false];
   if (holiday("kr", ymd)) return HOLIDAY;
+  if ((cfg.kr_market || {}).now === "unified") {
+    if (min >= H(8) && min < H(8) + 50) return ["프리마켓 (NXT)", H(8) + 50, true];
+    if (min >= H(15.5) && min < H(20)) return ["애프터마켓 (NXT)", H(20), true];
+  }
   if (min >= H(8.5) && min < H(9)) return ["장전 시간외", H(9), true];
   if (min >= H(9) && min < H(15.5)) return ["정규장", H(15.5), true];
   if (min >= H(15.5) && min < H(18)) return ["장후 시간외", H(18), true];
@@ -861,6 +869,18 @@ $("#telegram").onclick = async () => {
   const res = await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" },
                                              body: JSON.stringify({ on: !cfg.telegram.on }) });
   if (res.ok) setTelegram({ ...cfg.telegram, ...(await res.json()) });
+};
+// 국내 넥스트레이드(통합 시세). want = 설정, now = 서버가 켤 때 고른 것. 다르면 다시 켜야 한다
+function setKrMarket(m) {
+  cfg.kr_market = m;
+  $("#krmarket").setAttribute("aria-checked", m.want === "unified");
+  $("#krnote").textContent = m.want !== m.now ? "서버를 다시 켜야 적용된다"
+                           : m.now === "unified" ? "08:00~20:00 통합 시세" : "KRX 정규장만 (09:00~15:30)";
+}
+$("#krmarket").onclick = async () => {
+  const res = await fetch("/api/kr-market", { method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ unified: cfg.kr_market.want !== "unified" }) });
+  if (res.ok) setKrMarket(await res.json());
 };
 $("#tgtest").onclick = async () => {
   setMsg("텔레그램 보내는 중…");
@@ -986,6 +1006,7 @@ async function loadState() {
   setSigSound(st.signal_sound);
   setSoundWhen(st);
   setTelegram(st.telegram || { ready: false, on: false });
+  setKrMarket(st.kr_market || { want: "krx", now: "krx" });
   renderMarkets(st.markets);
   events = st.events || [];
   renderEvents();

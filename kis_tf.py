@@ -62,7 +62,7 @@ def load_minutes(con, appkey, secret, excd, symb, offline):
         con.commit()
     bars = rp.get_bars(con, excd, symb, 1)
     if excd == "KRX":
-        return [b for b in bars if b["time_us"][9:] <= k.KRX_CLOSE]
+        return [b for b in bars if k.KR_OPEN <= b["time_us"][9:] <= k.KR_CLOSE]
     return [b for b in bars if rp.session(rp.ts(b["time_us"])) != "주간"]
 
 
@@ -246,6 +246,7 @@ def main():
     ap.add_argument("--offline", action="store_true", help="새로 받지 않고 쌓아 둔 1분봉만")
     args = ap.parse_args()
     tfs = [int(x) for x in args.tf.split(",")]
+    k.load_kr_market()
 
     all_rows, bases, per_symb, ndays, _ = analyze(args.tickers or rp.collect_tickers(), tfs, args.period,
                                                   args.lines, args.offline)
