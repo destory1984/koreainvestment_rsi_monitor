@@ -63,12 +63,12 @@
     미국은 `US_HOLIDAYS`(2026~2027 뉴욕증권거래소 종일 휴장, 조기 폐장은 뺌) + `us_closed`. `us_session`·`us_day_session` 이 휴일을 안다.
     미국 밤 세션은 다음 날 장에 딸린 것으로 보고 다음 날이 휴일이면 쉰다고 본다 — **확인 못 함** (노동절 전날 밤 등에서 볼 것).
     서버가 `state.holidays`·웹소켓 `holidays` 로 주고, 화면 장 상태가 「휴장 (휴일)」.
-    억제·켤 때 알림은 안 보내고, `muted` 면 `disable_notification`. 설정 `telegram`, API `/api/telegram` `/api/telegram/test`.
-    오류 글에서 토큰을 지운다. **실제로 보내 본 적은 아직 없다.**
 24. **규칙 시험** (09-25) — `tests/test_rules.py`, 표준 `unittest`(pytest 없음). Gate·시그널·`muted`·`set_mute`·`fill_after`·`read_log`·
     세션·휴장일·`fetch_kr_bars`(가짜 응답)·되감기 채점. 일부러 규칙을 망가뜨리면(재무장 폭 0, 결과 부호 반대) 잡는 것을 봤다.
 25. **텔레그램** (09-25) — `kis_telegram.py`. 토큰·대화방은 환경변수 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`(Webull 판 `C:\_c\rsi\rsi_monitor.py` 가
     setx 로 넣어 둔 것, 이 PC 에 있다) → `kis_config.json` 의 `telegram_token`/`telegram_chat`. `setup`·`test` 명령. 스레드 줄로 보낸다.
+    억제·켤 때 알림은 안 보내고, `muted` 면 `disable_notification`. 설정 `telegram`, API `/api/telegram` `/api/telegram/test`.
+    오류 글에서 토큰을 지운다. **실제로 보내 본 적은 아직 없다.**
 26. **분봉 캐시를 SQLite 로** (09-25) — `replay_cache/bars.db`, 표 `bars`(excd, symb, nmin, t, OHLCV, 키 앞 넷)·`tickers`(night).
     WAL, 기다림 30초. JSON 13개(봉 21,820)를 옮겼고 원본은 `replay_cache/json_backup/`. 옮기기 전후 되감기 출력이 같았다.
     3.3MB → 1.8MB. 까닭: 30분 수집과 되감기가 겹쳐도 안전, 새 봉만 넣으니 기간이 길어도 쓰기가 늘 몇 ms.
