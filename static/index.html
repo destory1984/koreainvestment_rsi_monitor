@@ -63,6 +63,13 @@
   .menu .info:hover, .menu .info[aria-expanded="true"] { color: var(--down); }
   .menu .more { margin: 0 8px 4px; padding: 6px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);
                 font-size: calc(var(--fs) * .9); line-height: 1.5; max-width: calc(var(--fs) * 30); }
+  .menu .mhead { padding: 8px 8px 2px; border-top: 1px solid var(--line); margin-top: 4px; font-weight: 600; }
+  .menu .mhead small { font-weight: 400; color: var(--muted); }
+  .menu .mchecks { display: flex; flex-wrap: wrap; gap: 0 2px; padding: 0 2px; max-width: calc(var(--fs) * 30); }
+  .menu .qtimes { justify-content: flex-end; gap: 6px; color: var(--muted); }
+  .menu .qtimes input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line);
+                        border-radius: 5px; padding: 1px 4px; }
+  .menu .qtimes input:disabled { opacity: .5; }
   .switch:disabled { opacity: .4; cursor: default; }
   .switch { position: relative; flex: none; width: calc(var(--fs) * 3.2); height: calc(var(--fs) * 1.8); padding: 0;
             border: 0; border-radius: 99px; background: var(--line); cursor: pointer; transition: background .15s; }
@@ -155,6 +162,11 @@
   <div class="mrow"><span class="mlabel"><span>매수·매도 시그널 <button type="button" class="info" aria-expanded="false" title="RSI 와 MACD 를 같이 본다. RSI 가 35 밑(매수 쪽)이나 65 위(매도 쪽)로 가면 12봉 동안 대기하고, 그 사이 MACD 히스토그램이 음→양으로 바뀌면 매수, 양→음이면 매도 시그널을 「테슬라 매수 시그널」처럼 읽는다. 봉이 닫힐 때만 보니 선 알림보다 늦고 드물다. 대기 동안 RSI 가 30·70 까지 갔으면 「강」, 아니면 「약」. MACD 가 0 위에서 난 매수(0 아래에서 난 매도)는 「추세 순응」, 반대면 「역추세」. 표의 매수/매도 칸과 차트 화살표가 이것이다." aria-label="자세히">ⓘ</button></span><small>RSI 가 선을 넘은 뒤 MACD 가 돌아설 때. 봉이 닫힐 때만</small></span>
     <button class="switch" id="sigsound" role="switch" aria-checked="true" aria-label="매수·매도 시그널 소리"></button></div>
   <p class="more" hidden>RSI 와 MACD 를 같이 본다. RSI 가 35 밑(매수 쪽)이나 65 위(매도 쪽)로 가면 12봉 동안 대기하고, 그 사이 MACD 히스토그램이 음→양으로 바뀌면 매수, 양→음이면 매도 시그널을 「테슬라 매수 시그널」처럼 읽는다. 봉이 닫힐 때만 보니 선 알림보다 늦고 드물다. 대기 동안 RSI 가 30·70 까지 갔으면 「강」, 아니면 「약」. MACD 가 0 위에서 난 매수(0 아래에서 난 매도)는 「추세 순응」, 반대면 「역추세」. 표의 매수/매도 칸과 차트 화살표가 이것이다.</p>
+  <div class="mhead">소리 나는 때 <small>꺼 둔 때도 알림 기록에는 쌓인다</small></div>
+  <div class="mchecks" id="sesschecks"></div>
+  <div class="mrow"><span class="mlabel">조용한 시각<small>이 PC 시각. 23:00~07:00 처럼 자정을 넘어도 된다</small></span>
+    <button class="switch" id="quiet" role="switch" aria-checked="false" aria-label="조용한 시각"></button></div>
+  <div class="mrow qtimes"><input type="time" id="qfrom" aria-label="조용한 시각 시작"> ~ <input type="time" id="qto" aria-label="조용한 시각 끝"></div>
   <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
 </div>
 <div id="markets"></div>
@@ -524,7 +536,8 @@ function eventItem(ev) {
     `<span class="${ev.suppressed ? "" : cls}">${esc(ev.text)}${ev.strength === "strong" ? " ‼" : ""}</span>` +
     `<span class="dim">RSI ${fr(ev.rsi)}</span>` +
     (ev.detail ? `<span class="dim">${esc(ev.detail)}</span>` : "") +
-    (ev.suppressed ? `<span class="dim">억제 — ${esc(ev.suppressed)}</span>` : "");
+    (ev.suppressed ? `<span class="dim">억제 — ${esc(ev.suppressed)}</span>` : "") +
+    (ev.muted ? `<span class="dim">🔇 ${esc(ev.muted)}</span>` : "");
   return li;
 }
 
@@ -740,6 +753,31 @@ $("#fsdown").onclick = () => setFontSize(fontSize - 1);
 $("#fsup").onclick = () => setFontSize(fontSize + 1);
 setFontSize(fontSize);
 
+// 소리 나는 때: 세션 체크와 조용한 시각
+function setSoundWhen(st) {
+  if (!st.quiet) return;   // 이 기능 전의 서버
+  cfg.sound_sessions = st.sound_sessions; cfg.quiet = st.quiet;
+  if (st.session_names) cfg.session_names = st.session_names;
+  $("#sesschecks").innerHTML = Object.entries(cfg.session_names || {}).map(([key, name]) =>
+    `<label><input type="checkbox" value="${esc(key)}"${cfg.sound_sessions[key] ? " checked" : ""}>${esc(name)}</label>`).join("");
+  $("#quiet").setAttribute("aria-checked", cfg.quiet.on);
+  $("#qfrom").value = cfg.quiet.from; $("#qto").value = cfg.quiet.to;
+  $("#qfrom").disabled = $("#qto").disabled = !cfg.quiet.on;
+}
+
+async function postSoundWhen(body) {
+  const res = await fetch("/api/sound-when", { method: "POST", headers: { "Content-Type": "application/json" },
+                                               body: JSON.stringify(body) });
+  const j = await res.json();
+  if (!res.ok) return setMsg(j.detail || "소리 나는 때를 바꾸지 못했다", true);
+  setSoundWhen(j);
+}
+
+$("#sesschecks").onchange = e => postSoundWhen({ sessions: { [e.target.value]: e.target.checked } });
+$("#quiet").onclick = () => postSoundWhen({ quiet: { on: !cfg.quiet.on } });
+$("#qfrom").onchange = () => $("#qfrom").value && postSoundWhen({ quiet: { from: $("#qfrom").value } });
+$("#qto").onchange = () => $("#qto").value && postSoundWhen({ quiet: { to: $("#qto").value } });
+
 async function loadState() {
   const st = await (await fetch("/api/state")).json();
   cfg = st;
@@ -747,6 +785,7 @@ async function loadState() {
   setStatus(st.status);
   setSound(st.sound);
   setSigSound(st.signal_sound);
+  setSoundWhen(st);
   renderMarkets(st.markets);
   events = st.events || [];
   renderEvents();

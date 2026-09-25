@@ -345,6 +345,17 @@ def us_day_session(now=None):
     return False
 
 
+def us_session(now=None):
+    """미국 동부 시각으로 지금 세션: "day"(주간거래) / "pre" / "regular" / "after" / None(휴장). 휴장일은 모른다."""
+    t = now or datetime.now(NEW_YORK)
+    if us_day_session(t):
+        return "day"
+    if t.weekday() >= 5:
+        return None
+    h = t.hour + t.minute / 60
+    return "pre" if 4 <= h < 9.5 else "regular" if 9.5 <= h < 16 else "after" if 16 <= h < 20 else None
+
+
 class KisInUse(Exception):
     """앱키 하나에 실시간 연결은 하나뿐인데 이미 다른 곳에서 열려 있다."""
 

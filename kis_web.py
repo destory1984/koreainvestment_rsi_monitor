@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import calendar
 import json
+import re
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -33,6 +34,8 @@ SETTINGS = HERE / "kis_settings.json"
 ALERT_LOG = HERE / "kis_alerts.jsonl"   # 알림 기록. 한 줄에 하나, 서버를 다시 켜도 남는다
 HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
+SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regular": "미국 정규장",
+                  "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
 
 
 class Hub:
@@ -49,6 +52,11 @@ class Hub:
             self.settings = {}
         self.settings.setdefault("sound", True)
         self.settings.setdefault("signal_sound", True)   # 시그널도 말로 알릴지
+        # 소리 나는 때: 세션마다 켜고 끄기, 그리고 조용한 시각(이 PC 시각). 알림 기록에는 늘 쌓인다
+        self.settings.setdefault("sound_sessions", {})
+        for key in SOUND_SESSIONS:
+            self.settings["sound_sessions"].setdefault(key, True)
+        self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
         self.signals = {}         # 종목 -> 닫힌 봉들에서 난 시그널 전부
         self.closed = set()       # 새 봉이 생겨 앞 봉이 닫힌 종목
         self.clients = set()
@@ -316,13 +324,14 @@ class Hub:
                   "rsi": v, "zone": a["zone"], "strength": a["strength"],
                   "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
                           + (" (시작 때부터)" if a["start"] else ""),
-                  "suppressed": a.get("suppressed", "")}
+                  "suppressed": a.get("suppressed", ""),
+                  "muted": "" if a.get("suppressed") else self.muted(b)}
             self.events.appendleft(ev)
             with ALERT_LOG.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             print(f"{ev['t']} 알림 {b.name} {ev['text']} RSI {v:.2f}"
                   + (f" — 억제 ({ev['suppressed']})" if ev["suppressed"] else ""), flush=True)
-            if not ev["suppressed"] and self.settings["sound"]:
+            if not ev["suppressed"] and self.settings["sound"] and not ev["muted"]:
                 strong = a["strength"] == "strong"
                 self.voice.say(said if (not strong or al.SAY_STRONG) else "",
                                "full" if strong else "short")
@@ -348,12 +357,12 @@ class Hub:
                       "text": f"{x.word} 시그널 ({x.grade}, {x.trend})",
                       "detail": f"무장 중 RSI {'최저' if x.side == 'buy' else '최고'} {x.extreme:.1f}"
                                 f" · MACD {x.macd:+.4f} / 시그널 {x.signal:+.4f}",
-                      "suppressed": ""}
+                      "suppressed": "", "muted": self.muted(b)}
                 self.events.appendleft(ev)
                 with ALERT_LOG.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(ev, ensure_ascii=False) + "\n")
                 print(f"{ev['t']} 시그널 {b.name} {ev['text']} RSI {x.rsi:.2f}", flush=True)
-                if self.settings["sound"] and self.settings["signal_sound"]:
+                if self.settings["sound"] and self.settings["signal_sound"] and not ev["muted"]:
                     self.voice.say(al.say_signal(b.name, s, x.side),
                                    "full" if x.grade == "강" else "short")
                 asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
@@ -364,6 +373,18 @@ class Hub:
             return None
         return {"side": x.side, "word": x.word, "grade": x.grade, "trend": x.trend,
                 "bar": epoch(x.bar)}
+
+    def muted(self, book):
+        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열."""
+        q = self.settings["quiet"]
+        if q["on"]:
+            now, a, b = datetime.now().strftime("%H:%M"), q["from"], q["to"]
+            if (a <= now < b) if a <= b else (now >= a or now < b):
+                return f"조용한 시각 {a}~{b}"
+        key = "kr" if book.excd == "KRX" else k.us_session()
+        if key and not self.settings["sound_sessions"].get(key, True):
+            return f"{SOUND_SESSIONS[key]} 소리 끔"
+        return ""
 
     def set_sound(self, on):
         self.settings["sound"] = bool(on)
@@ -397,6 +418,8 @@ class Hub:
                 "strong_lower": al.STRONG_LOWER, "strong_upper": al.STRONG_UPPER,
                 "max": MAX_TICKERS, "sound": self.settings["sound"], "markets": self.markets,
                 "signal_sound": self.settings["signal_sound"],
+                "sound_sessions": self.settings["sound_sessions"], "quiet": self.settings["quiet"],
+                "session_names": SOUND_SESSIONS,
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -520,6 +543,27 @@ async def api_night(symb: str = Body(...), on: bool = Body(...)):
     except KeyError:
         raise HTTPException(404, symb)
     return hub.books[symb.upper()].night
+
+
+@app.post("/api/sound-when")
+def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None)):
+    """소리 나는 때. sessions 는 {"day": true, ...}, quiet 는 {"on", "from": "HH:MM", "to": "HH:MM"}."""
+    if sessions:
+        for key, on in sessions.items():
+            if key in SOUND_SESSIONS:
+                hub.settings["sound_sessions"][key] = bool(on)
+    if quiet:
+        q = hub.settings["quiet"]
+        for f in ("from", "to"):
+            v = quiet.get(f)
+            if v is not None:
+                if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+                    raise HTTPException(400, f"{v}: HH:MM 으로 적을 것")
+                q[f] = v
+        if "on" in quiet:
+            q["on"] = bool(quiet["on"])
+    hub.save_settings()
+    return {"sound_sessions": hub.settings["sound_sessions"], "quiet": hub.settings["quiet"]}
 
 
 @app.post("/api/signal-sound")
