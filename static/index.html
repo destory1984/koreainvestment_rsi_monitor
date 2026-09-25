@@ -176,7 +176,8 @@ const TREND_EPS = 0.05;  // 텍스트 버전과 같다
 
 const f = (v, d = 2) => v == null ? "-" : v.toFixed(d);
 const sgn = (v, d = 4) => v == null ? "-" : (v >= 0 ? "+" : "") + v.toFixed(d);
-const fmtPrice = (p, krx) => p == null ? "-" : krx ? p.toLocaleString("ko-KR") : p.toFixed(p >= 100 ? 2 : 4);
+// 미국 주식은 1달러 이상이면 XX.YY, 1달러 밑이면 소수 넷째 자리까지
+const fmtPrice = (p, krx) => p == null ? "-" : krx ? p.toLocaleString("ko-KR") : p.toFixed(p >= 1 ? 2 : 4);
 const hms = t => t ? `${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}` : "";
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 

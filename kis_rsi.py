@@ -262,8 +262,8 @@ def cmd_bars(args):
         bars = fetch_bars(appkey, secret, excd, symb, args.min, pinc=not args.today)
         print(f"\n{excd}:{symb} {args.min}분봉 {len(bars)}개 (미국시각)")
         for b in bars[-args.n:]:
-            print(f"  {b['time_us']}  O {b['open']:>9.4f}  H {b['high']:>9.4f}  "
-                  f"L {b['low']:>9.4f}  C {b['close']:>9.4f}  V {b['volume']:>9}")
+            print(f"  {b['time_us']}  O {px(b['open'], 9)}  H {px(b['high'], 9)}  "
+                  f"L {px(b['low'], 9)}  C {px(b['close'], 9)}  V {b['volume']:>9}")
         time.sleep(0.1)
 
 
@@ -291,9 +291,14 @@ def bar_start(ymd, hms, nmin):
 
 
 def print_tick(d):
-    print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {float(d['LAST']):>10.4f}  "
+    print(f"{datetime.now():%H:%M:%S}  {d['SYMB']:<6} {px(float(d['LAST']), 10)}  "
           f"{float(d['RATE']):>+6.2f}%  체결 {d['EVOL']:>6}  누적 {d.get('TVOL', '')}  "
           f"(현지 {d['XHMS']})", flush=True)
+
+
+def px(p, width=0):
+    """미국 주식 가격: 1달러 이상이면 XX.YY, 밑이면 소수 넷째 자리까지."""
+    return f"{p:>{width}.{2 if p >= 1 else 4}f}"
 
 
 def normalize(tr_id, rec):
@@ -486,7 +491,7 @@ def cmd_rsi(args):
         line, sig, hist = macd_series(closes)
         for i in range(max(0, len(closes) - args.n), len(closes)):
             ind = {"rsi": r[i], "macd": line[i], "signal": sig[i], "hist": hist[i]}
-            print(f"  {book.bars[i]['time_us']}  C {closes[i]:>9.4f}  {fmt_ind(ind)}")
+            print(f"  {book.bars[i]['time_us']}  C {px(closes[i], 9)}  {fmt_ind(ind)}")
     if args.once:
         return
     shown = {}
@@ -501,7 +506,7 @@ def cmd_rsi(args):
         if last and abs(ind["rsi"] - last["rsi"]) < args.step and (ind["hist"] > 0) == (last["hist"] > 0):
             return
         shown[book.symb] = ind
-        print(f"{datetime.now():%H:%M:%S}  {book.symb:<6} {book.price:>10.4f}  {fmt_ind(ind)}  "
+        print(f"{datetime.now():%H:%M:%S}  {book.symb:<6} {px(book.price, 10)}  {fmt_ind(ind)}  "
               f"(미국 {book.us_time})", flush=True)
 
     print("\n구독:", ", ".join(b.key for b in books.values()))
@@ -532,7 +537,7 @@ def cmd_watch(args):
             hc = "green" if ind["hist"] > 0 else "red"
             rate = "" if b.rate is None else f"[{'green' if b.rate >= 0 else 'red'}]{b.rate:+.2f}%[/]"
             us = f"{b.us_time[:2]}:{b.us_time[2:4]}:{b.us_time[4:]}" if b.us_time else ""
-            t.add_row(b.symb, f"{b.price:.4f}", rate, rsi, f"{ind['macd']:+.4f}",
+            t.add_row(b.symb, px(b.price), rate, rsi, f"{ind['macd']:+.4f}",
                       f"{ind['signal']:+.4f}", f"[{hc}]{ind['hist']:+.4f}[/]", us)
         return t
 
