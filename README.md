@@ -106,7 +106,18 @@ python -m venv .venv_tts
 끌어와 `torch` 와 짝이 안 맞고, 서버가 `WinError 127` 로 죽는다. 그랬다면
 `.venv_tts/Scripts/pip install torchaudio==<torch 와 같은 버전> --index-url https://download.pytorch.org/whl/cu124`.
 
-`준비됨: http://127.0.0.1:47650` 이 나오면 된 것이다. 이 창을 켜 둔 채 다른 창에서 `python kis_web.py` 를 띄운다.
+`준비됨: http://127.0.0.1:47650` 이 나오면 된 것이다.
+
+**늘 띄워 둘 필요는 없다.** 한 번 만든 문장은 `tts_cache/` 에 파일로 남고 웹 서버는 그 파일만 튼다.
+그래서 종목을 더했거나 읽는 법을 바꿨을 때만 이것으로 녹음하면 된다. 서버를 잠깐 띄워 없는 문장만 만들고 내린다:
+
+```bash
+python tts_make.py              # 종목 목록의 알림 문장 가운데 로컬 목소리가 없는 것만 (Edge 로만 있던 것도 바꾼다)
+python tts_make.py --redo BE    # BE 문장은 있어도 다시
+python tts_make.py --dry-run    # 만들 문장만 보기
+```
+
+읽는 법(`kis_alert.py` 의 `TTS_SAY_AS`)을 바꿨다면 웹 서버도 다시 켜야 새 문장으로 읽는다.
 
 ## 인터넷에 띄우지 않는 이유
 
