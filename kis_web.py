@@ -14,6 +14,7 @@ import asyncio
 import calendar
 import json
 import re
+import sys
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -606,13 +607,29 @@ def main():
     p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 이면 같은 공유기의 다른 기기에서도 열린다")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--no-browser", action="store_true", help="브라우저를 열지 않는다")
+    p.add_argument("--log", help="찍는 것을 이 파일에 덧붙인다 (창 없이 띄울 때)")
     args = p.parse_args()
-    hub = Hub(args.tickers, args.min, args.period, args.tts_cache)
+    import socket
     import threading
     import uvicorn
     import webbrowser
-    k.load_keys()  # 키가 없으면 여기서 안내하고 끝낸다
+    if args.log:
+        log = Path(args.log)
+        if log.exists() and log.stat().st_size > 5_000_000:   # 너무 커지면 새로
+            log.replace(log.with_suffix(log.suffix + ".old"))
+        sys.stdout = sys.stderr = open(log, "a", encoding="utf-8", buffering=1)
+        print(f"\n── {datetime.now():%Y-%m-%d %H:%M:%S} 시작", flush=True)
     url = f"http://localhost:{args.port}"
+    # 이미 떠 있으면 새로 띄우지 않는다. 둘이 뜨면 앱키 하나의 실시간 연결을 서로 빼앗는다
+    with socket.socket() as s:
+        s.settimeout(1)
+        if s.connect_ex(("127.0.0.1", args.port)) == 0:
+            print(f"이미 떠 있다: {url}", flush=True)
+            if not args.no_browser:
+                webbrowser.open(url)
+            return
+    hub = Hub(args.tickers, args.min, args.period, args.tts_cache)
+    k.load_keys()  # 키가 없으면 여기서 안내하고 끝낸다
     print(url, flush=True)
     if not args.no_browser:
         threading.Timer(2.0, webbrowser.open, (url,)).start()

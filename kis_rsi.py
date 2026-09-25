@@ -22,9 +22,11 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-# Git Bash 는 파이프로 붙어서 cp949 로 찍히면 한글이 깨진다
+# Git Bash 는 파이프로 붙어서 cp949 로 찍히면 한글이 깨진다.
+# 작업 스케줄러가 pythonw 로 띄우면 stdout 이 아예 없다 (None)
 for _s in (sys.stdout, sys.stderr):
-    _s.reconfigure(encoding="utf-8")
+    if _s is not None:
+        _s.reconfigure(encoding="utf-8")
 
 HERE = Path(__file__).parent
 CONFIG = HERE / "kis_config.json"
@@ -55,10 +57,21 @@ KR_FIELDS = ["MKSC_SHRN_ISCD", "STCK_CNTG_HOUR", "STCK_PRPR", "PRDY_VRSS_SIGN", 
 KR_INFO = {}  # 종목코드 -> {"name", "price", "rate"} (국내 분봉을 받을 때 채운다)
 
 
+def _bashrc_keys():
+    """~/.bashrc 의 export KIS_APPKEY=... 줄. 작업 스케줄러처럼 셸을 거치지 않고 뜰 때 쓴다."""
+    try:
+        text = (Path.home() / ".bashrc").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    found = re.findall(r"^\s*export\s+(KIS_APP(?:KEY|SECRET))=(['\"]?)(.+?)\2\s*$", text, re.M)
+    return {name: value for name, _, value in found}
+
+
 def load_keys():
     cfg = json.loads(CONFIG.read_text(encoding="utf-8")) if CONFIG.exists() else {}
-    appkey = os.environ.get("KIS_APPKEY") or cfg.get("appkey")
-    secret = os.environ.get("KIS_APPSECRET") or cfg.get("appsecret")
+    rc = {} if os.environ.get("KIS_APPKEY") or cfg.get("appkey") else _bashrc_keys()
+    appkey = os.environ.get("KIS_APPKEY") or cfg.get("appkey") or rc.get("KIS_APPKEY")
+    secret = os.environ.get("KIS_APPSECRET") or cfg.get("appsecret") or rc.get("KIS_APPSECRET")
     if not appkey or not secret:
         sys.exit("한국투자증권 앱키가 없다. 먼저  python kis_rsi.py setup  으로 넣을 것.\n"
                  "(환경변수 KIS_APPKEY / KIS_APPSECRET 로 줘도 된다)")

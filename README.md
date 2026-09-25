@@ -55,6 +55,27 @@ python kis_web.py TSLA SOXL 005930
 브라우저가 저절로 http://localhost:8000 을 연다. 다음부터는 종목 없이 `python kis_web.py` 만 하면
 저장된 목록으로 뜬다.
 
+### 자동으로 띄우기 (고르기)
+
+윈도우에 로그인하면 창 없이 서버를 띄우게 작업 스케줄러에 걸어 둘 수 있다. PowerShell 에서:
+
+```powershell
+$t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"; $t.Delay = "PT30S"
+$a = New-ScheduledTaskAction -Execute "$env:LOCALAPPDATA\Microsoft\WindowsApps\pythonw.exe" `
+       -Argument 'kis_web.py --no-browser --log kis_web.log' -WorkingDirectory "C:\_c\koreainvest"
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) `
+       -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "KIS RSI 모니터" -Trigger $t -Action $a -Settings $s
+```
+
+- 경로와 `pythonw.exe` 자리는 자기 것으로 바꾼다. 창이 없으니 찍는 것은 `kis_web.log` 에 쌓인다 (5MB 를 넘으면 `.old` 로 넘긴다).
+- 키를 환경변수나 `kis_config.json` 에서 못 찾으면 `~/.bashrc` 의 `export KIS_APPKEY=...` 줄을 읽는다
+  (작업 스케줄러로 뜨면 셸을 거치지 않아서다).
+- **이미 떠 있으면 새로 띄우지 않고 끝난다.** 앱키 하나에 실시간 연결은 하나라 둘이 뜨면 서로 끊기 때문이다.
+  손으로 `python kis_web.py` 를 해도 마찬가지로, 떠 있는 서버 쪽으로 브라우저만 연다.
+- 끄기 `Stop-ScheduledTask -TaskName "KIS RSI 모니터"`, 지금 띄우기 `Start-ScheduledTask -TaskName "KIS RSI 모니터"`,
+  아예 지우기 `Unregister-ScheduledTask -TaskName "KIS RSI 모니터"`.
+
 ### 5. 목소리 (따로 할 것 없음)
 
 알림 목소리는 있는 것 가운데 가장 좋은 것을 저절로 고른다. 2번을 선택하면, 따로 할건 없다.
