@@ -86,6 +86,10 @@
   @media (hover: none) { td.del button, td.grip span { visibility: visible; } }
   .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--muted); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
+  .ntag { cursor: pointer; margin: 0 0 0 4px; }
+  .ntag.manual { border-color: var(--down); color: var(--down); }
+  .linkbtn { font: inherit; border: 0; background: none; color: var(--down); cursor: pointer; padding: 0 2px;
+             text-decoration: underline; }
   .tag { font-size: calc(var(--fs) * .8); color: var(--muted); border: 1px solid var(--line); border-radius: 3px;
          padding: 0 3px; margin-right: 4px; font-weight: 400; }
   .rsi { display: inline-flex; align-items: center; gap: 6px; }
@@ -174,6 +178,8 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 let cfg = {}, selected = null, rows = {}, charts = null, events = [];
 const TREND_EPS = 0.05;  // 텍스트 버전과 같다
 
+// RSI 는 소수점 없이. 반올림하면 69.6 이 「70」인데 구간은 「65 초과」로 어긋나니 버린다
+const fr = v => v == null ? "-" : String(Math.floor(v));
 const f = (v, d = 2) => v == null ? "-" : v.toFixed(d);
 const sgn = (v, d = 4) => v == null ? "-" : (v >= 0 ? "+" : "") + v.toFixed(d);
 // 미국 주식은 1달러 이상이면 XX.YY, 1달러 밑이면 소수 넷째 자리까지
@@ -216,7 +222,7 @@ function rsiCell(r) {
   }
   return `<span class="rsi"><span class="gauge" style="background:${gaugeBg()}">` +
          `<i style="left:calc(${Math.max(0, Math.min(100, v))}% - 1.5px)"></i></span>` +
-         `<span class="${cls}">${f(v)}</span>${trend}</span>`;
+         `<span class="${cls}">${fr(v)}</span>${trend}</span>${nightTag(r)}`;
 }
 
 function ago(ts) {
@@ -226,6 +232,43 @@ function ago(ts) {
   if (m < 60 * 24) return `${Math.floor(m / 60)}시간`;
   return `${Math.floor(m / 1440)}일`;
 }
+
+// 미국 종목의 RSI 에 오버나이트(주간거래) 봉을 넣었는지. Webull 은 24시간 거래 종목만 넣는다
+function nightText(r) {
+  const n = r.night;
+  const why = `지난 오버나이트 5분 칸 ${n.of}개 중 ${n.have}개에 체결이 있어`;
+  const how = n.on === n.auto ? `${why} Webull 24시간 거래 종목${n.on ? "으로" : "이 아닌 것으로"} 봤다`
+                              : `손으로 바꿨다 (저절로라면 ${n.auto ? "넣는다" : "뺀다"}. ${why})`;
+  return (n.on ? "RSI·차트에 오버나이트 봉을 넣는다" : "RSI·차트에서 오버나이트 봉을 뺐다 (애프터장까지)") + ` — ${how}.`;
+}
+
+function nightTag(r) {
+  if (!r.night || !r.night.have) return "";   // 오버나이트 체결이 없으면 따질 게 없다
+  const manual = r.night.on !== r.night.auto;
+  return `<span class="tag ntag${manual ? " manual" : ""}" data-symb="${esc(r.symb)}" title="${esc(nightText(r))} 누르면 바꾼다">` +
+         `${r.night.on ? "24h" : "정규"}</span>`;
+}
+
+// 표시를 누르면 까닭을 알림 줄에 보이고, 거기서 바꿀 수 있다 (휴대폰은 마우스를 올려 볼 수 없으니)
+function explainNight(symb) {
+  const r = rows[symb];
+  if (!r || !r.night) return;
+  $("#msg").className = "sub";
+  $("#msg").innerHTML = `${esc(symb)}: ${esc(nightText(r))} ` +
+    `<button type="button" class="linkbtn" id="nightflip">${r.night.on ? "빼기" : "넣기"}</button>`;
+  $("#nightflip").onclick = async () => {
+    setMsg(`${symb} 분봉 다시 받는 중…`);
+    const res = await fetch("/api/night", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ symb, on: !r.night.on }) });
+    if (!res.ok) return setMsg(`${symb} 바꾸지 못했다`, true);
+    const n = await res.json();
+    setMsg(`${symb}: 오버나이트 봉을 ${n.on ? "넣었다" : "뺐다"}`);
+  };
+}
+$("#rows").addEventListener("click", e => {
+  const t = e.target.closest(".ntag");
+  if (t) explainNight(t.dataset.symb);
+});
 
 function zoneCell(r) {
   const [zone, strength] = r.zone || ["neutral", ""];
@@ -357,7 +400,8 @@ function makeCharts() {
   const s = {
     candle: price.addCandlestickSeries({ upColor: css("--up"), downColor: css("--down"),
       borderVisible: false, wickUpColor: css("--up"), wickDownColor: css("--down") }),
-    rsi: rsi.addLineSeries({ color: css("--text"), lineWidth: 2, priceLineVisible: false }),
+    rsi: rsi.addLineSeries({ color: css("--text"), lineWidth: 2, priceLineVisible: false,
+                           priceFormat: { type: "price", precision: 0, minMove: 1 } }),
     hist: macd.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false }),
     macd: macd.addLineSeries({ color: css("--down"), lineWidth: 2, priceLineVisible: false }),
     signal: macd.addLineSeries({ color: "#e69a28", lineWidth: 2, priceLineVisible: false }),
@@ -459,7 +503,7 @@ function eventItem(ev) {
   li.className = ev.suppressed ? "sup" : "";
   li.innerHTML = `<span class="t">${ev.d && ev.d !== today ? ev.d + " " : ""}${ev.t}</span><b>${esc(ev.name)}</b>` +
     `<span class="${ev.suppressed ? "" : cls}">${esc(ev.text)}${ev.strength === "strong" ? " ‼" : ""}</span>` +
-    `<span class="dim">RSI ${f(ev.rsi)}</span>` +
+    `<span class="dim">RSI ${fr(ev.rsi)}</span>` +
     (ev.detail ? `<span class="dim">${esc(ev.detail)}</span>` : "") +
     (ev.suppressed ? `<span class="dim">억제 — ${esc(ev.suppressed)}</span>` : "");
   return li;

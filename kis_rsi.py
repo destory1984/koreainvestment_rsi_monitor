@@ -132,18 +132,40 @@ def fetch_bars(appkey, secret, excd, symb, nmin=5, pinc=True, nrec=120):
     return list(reversed(bars))
 
 
-def fetch_bars_24h(appkey, secret, excd, symb, nmin=5):
-    """정규장·프리·애프터 분봉에 미국 주간거래(한국 낮) 분봉을 시각 순서로 끼워 넣는다.
-    Webull 5분봉도 주간거래 봉을 넣어 RSI 를 낸다. 주간거래 분봉을 못 받으면 정규 쪽만 돌려준다."""
-    bars = fetch_bars(appkey, secret, excd, symb, nmin)
-    if excd not in DAY_EXCD:
-        return bars
+NIGHT_SHARE = 0.5   # 최근 오버나이트 5분 칸의 이만큼 넘게 체결이 있으면 Webull 24시간 거래 종목으로 본다
+
+
+def night_slots(nmin=5, now=None):
+    """지금부터 거슬러 올라간 최근 오버나이트(미국 주간거래) 봉 시작 시각들. 한 번 분량(8시간)."""
+    count = 8 * 60 // nmin
+    t = (now or datetime.now(NEW_YORK)).replace(second=0, microsecond=0)
+    t -= timedelta(minutes=t.minute % nmin)
+    out = []
+    for _ in range(count * 40):   # 주말을 건너도 넉넉하게
+        if len(out) >= count:
+            break
+        if us_day_session(t):
+            out.append(t.strftime("%Y%m%d %H%M%S"))
+        t -= timedelta(minutes=nmin)
+    return out
+
+
+def fetch_night(appkey, secret, excd, symb, nmin=5):
+    """미국 주간거래 분봉과, 최근 오버나이트 칸 가운데 체결이 있었던 칸 수.
+    (봉들, 체결 있던 칸, 전체 칸). 못 받으면 봉 없이 돌려준다."""
+    slots = night_slots(nmin)
     try:
         day = fetch_bars(appkey, secret, DAY_EXCD[excd], symb, nmin)
     except Exception:
-        return bars
+        day = []
+    have = {b["time_us"] for b in day}
+    return day, sum(s in have for s in slots), len(slots)
+
+
+def merge_bars(bars, day):
+    """정규장·프리·애프터 분봉에 주간거래 분봉을 시각 순서로 끼워 넣는다. 겹치면 정규 쪽."""
     merged = {b["time_us"]: b for b in day}
-    merged.update({b["time_us"]: b for b in bars})   # 겹치면 정규 쪽
+    merged.update({b["time_us"]: b for b in bars})
     return [merged[t] for t in sorted(merged)]
 
 
@@ -409,6 +431,7 @@ class Book:
         self.rate = info.get("rate")
         self.us_time = ""
         self.day_quote = False   # 지금 가격이 미국 주간거래 체결가인가
+        self.night = None        # 오버나이트 봉을 넣을지 {"on", "auto", "have", "of"} (웹에서 정한다)
 
     @property
     def key(self):
@@ -423,6 +446,10 @@ class Book:
     def on_tick(self, d):
         """체결 하나를 반영한다. 새 봉이 생기면 True."""
         price = float(d["LAST"])
+        if d.get("RSYM", "").startswith("R") and self.night and not self.night["on"]:
+            # Webull 이 오버나이트 거래를 안 하는 종목: 가격만 고치고 봉에는 넣지 않는다
+            self.price, self.rate, self.us_time, self.day_quote = price, float(d["RATE"]), d["XHMS"], True
+            return False
         start = bar_start(d["XYMD"], d["XHMS"], self.nmin)
         new = not self.bars or start > self.bars[-1]["time_us"]
         if new:

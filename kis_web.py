@@ -96,6 +96,34 @@ class Hub:
                 flush=True)):
             print(f"알림 문장 {missing}개를 만드는 중", flush=True)
 
+    def _bars(self, excd, symb):
+        """분봉을 받는다 (블로킹). 미국 종목은 Webull 처럼 오버나이트 거래가 활발한 종목만 주간거래 봉을 넣는다.
+        Webull 은 인기 종목만 24시간 거래를 해 주고 나머지는 애프터장까지만 그린다. 그 목록을 알 길이 없으니
+        최근 오버나이트 5분 칸 절반 넘게 체결이 있었는지로 가른다. 틀리면 화면에서 바꾸고 설정에 남긴다."""
+        bars = k.fetch_bars(self.appkey, self.secret, excd, symb, self.nmin)
+        if excd not in k.DAY_EXCD:
+            return bars, None
+        day, have, of = k.fetch_night(self.appkey, self.secret, excd, symb, self.nmin)
+        auto = have > of * k.NIGHT_SHARE
+        on = self.settings.get("night", {}).get(symb, auto)
+        return (k.merge_bars(bars, day) if on else bars), {"on": on, "auto": auto, "have": have, "of": of}
+
+    async def set_night(self, symb, on):
+        """오버나이트 봉을 넣을지 손으로 정한다. 저절로 정한 것과 같으면 설정에서 지운다."""
+        book = self.books.get(symb)
+        if not book or not book.night:
+            raise KeyError(symb)
+        night = self.settings.setdefault("night", {})
+        if on == book.night["auto"]:
+            night.pop(symb, None)
+        else:
+            night[symb] = on
+        self.save_settings()
+        async with self.lock:
+            book.bars, book.night = await asyncio.to_thread(self._bars, book.excd, symb)
+            self.signals[symb] = ks.signals(book.bars[:-1], self.period)
+        await self.broadcast({"type": "reload"})
+
     def _add(self, ticker):
         """종목을 찾아 분봉을 받는다 (블로킹). 이미 있으면 그 종목을 돌려준다."""
         excd, symb = k.resolve(self.appkey, self.secret, ticker)
@@ -103,10 +131,11 @@ class Hub:
             return self.books[symb], False
         if len(self.books) >= MAX_TICKERS:
             raise ValueError(f"종목은 {MAX_TICKERS}개까지다.")
-        bars = k.fetch_bars_24h(self.appkey, self.secret, excd, symb, self.nmin)
+        bars, night = self._bars(excd, symb)
         if not bars:
             raise ValueError(f"{symb}: 분봉이 없다.")
         book = k.Book(excd, symb, bars, self.nmin)
+        book.night = night
         self.books[symb] = book
         self.gates[symb] = al.Gate()
         self.signals[symb] = ks.signals(bars[:-1], self.period)
@@ -155,7 +184,7 @@ class Hub:
     def reload_bars(self):
         """끊겼다 붙으면 그 사이 체결을 놓쳤으니 분봉을 새로 받는다."""
         for b in list(self.books.values()):
-            b.bars = k.fetch_bars_24h(self.appkey, self.secret, b.excd, b.symb, self.nmin)
+            b.bars, b.night = self._bars(b.excd, b.symb)
             self.signals[b.symb] = ks.signals(b.bars[:-1], self.period)
             time.sleep(0.1)
 
@@ -341,6 +370,9 @@ class Hub:
 
     def set_sound(self, on):
         self.settings["sound"] = bool(on)
+        self.save_settings()
+
+    def save_settings(self):
         SETTINGS.write_text(json.dumps(self.settings, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # ── 브라우저 쪽 ───────────────────────────────────────────
@@ -354,7 +386,7 @@ class Hub:
         bar = b.bars[-1] if b.bars else None
         g = self.gates.get(b.symb)
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
-                "time": b.us_time, "day": b.day_quote, **ind,
+                "time": b.us_time, "day": b.day_quote, "night": b.night, **ind,
                 "zone": al.level_of(ind["rsi"]) if ind["rsi"] is not None else ("neutral", ""),
                 "rearm": bool(g and not all(g.armed.values())),
                 "last_alert": self.last_alert(b.symb),
@@ -482,6 +514,15 @@ async def api_order(symbs: list[str] = Body(..., embed=True)):
 def api_sound(on: bool = Body(..., embed=True)):
     hub.set_sound(on)
     return {"sound": hub.settings["sound"]}
+
+
+@app.post("/api/night")
+async def api_night(symb: str = Body(...), on: bool = Body(...)):
+    try:
+        await hub.set_night(symb.upper(), on)
+    except KeyError:
+        raise HTTPException(404, symb)
+    return hub.books[symb.upper()].night
 
 
 @app.post("/api/signal-sound")
