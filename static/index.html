@@ -57,6 +57,10 @@
   .menu .mrow { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 3px 8px; }
   .menu .mlabel { display: grid; gap: 1px; }
   .menu .mlabel small { color: var(--muted); font-size: calc(var(--fs) * .85); max-width: calc(var(--fs) * 22); }
+  .menu .info { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+  .menu .info:hover, .menu .info[aria-expanded="true"] { color: var(--down); }
+  .menu .more { margin: 0 8px 4px; padding: 6px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);
+                font-size: calc(var(--fs) * .9); line-height: 1.5; max-width: calc(var(--fs) * 30); }
   .switch:disabled { opacity: .4; cursor: default; }
   .switch { position: relative; flex: none; width: calc(var(--fs) * 3.2); height: calc(var(--fs) * 1.8); padding: 0;
             border: 0; border-radius: 99px; background: var(--line); cursor: pointer; transition: background .15s; }
@@ -142,10 +146,12 @@
 </header>
 <div class="menu" id="setmenu" hidden>
   <div class="mrow"><span>지표</span><span class="sub" id="sub"></span></div>
-  <div class="mrow"><span class="mlabel">RSI 선 알림<small>65·70 을 넘거나 35·30 밑으로 가는 순간. 끄면 소리가 모두 꺼진다</small></span>
+  <div class="mrow"><span class="mlabel"><span>RSI 선 알림 <button type="button" class="info" aria-expanded="false" title="RSI 하나만 본다. 체결마다 RSI 를 새로 셈해서, 65 를 넘으면 「테슬라 65 초과」, 70 을 넘으면 세 음 경보 뒤 「테슬라 70 초과」, 35·30 밑으로 가면 「미만」을 읽는다. 봉이 닫히기 전에도 울린다. 같은 알림이 되풀이되지 않게, 한 번 울리면 선에서 7 만큼 되돌아오고(65 면 58 이하) 10분이 지나야 다시 울린다. 이 스위치를 끄면 시그널을 포함해 소리가 모두 꺼진다. 알림 기록에는 계속 쌓인다." aria-label="자세히">ⓘ</button></span><small>65·70 을 넘거나 35·30 밑으로 가는 순간. 끄면 소리가 모두 꺼진다</small></span>
     <button class="switch" id="sound" role="switch" aria-checked="true" aria-label="RSI 선 알림 소리"></button></div>
-  <div class="mrow"><span class="mlabel">매수·매도 시그널<small>RSI 가 선을 넘은 뒤 MACD 가 돌아설 때. 봉이 닫힐 때만</small></span>
+  <p class="more" hidden>RSI 하나만 본다. 체결마다 RSI 를 새로 셈해서, 65 를 넘으면 「테슬라 65 초과」, 70 을 넘으면 세 음 경보 뒤 「테슬라 70 초과」, 35·30 밑으로 가면 「미만」을 읽는다. 봉이 닫히기 전에도 울린다. 같은 알림이 되풀이되지 않게, 한 번 울리면 선에서 7 만큼 되돌아오고(65 면 58 이하) 10분이 지나야 다시 울린다. 이 스위치를 끄면 시그널을 포함해 소리가 모두 꺼진다. 알림 기록에는 계속 쌓인다.</p>
+  <div class="mrow"><span class="mlabel"><span>매수·매도 시그널 <button type="button" class="info" aria-expanded="false" title="RSI 와 MACD 를 같이 본다. RSI 가 35 밑(매수 쪽)이나 65 위(매도 쪽)로 가면 12봉 동안 대기하고, 그 사이 MACD 히스토그램이 음→양으로 바뀌면 매수, 양→음이면 매도 시그널을 「테슬라 매수 시그널」처럼 읽는다. 봉이 닫힐 때만 보니 선 알림보다 늦고 드물다. 대기 동안 RSI 가 30·70 까지 갔으면 「강」, 아니면 「약」. MACD 가 0 위에서 난 매수(0 아래에서 난 매도)는 「추세 순응」, 반대면 「역추세」. 표의 매수/매도 칸과 차트 화살표가 이것이다." aria-label="자세히">ⓘ</button></span><small>RSI 가 선을 넘은 뒤 MACD 가 돌아설 때. 봉이 닫힐 때만</small></span>
     <button class="switch" id="sigsound" role="switch" aria-checked="true" aria-label="매수·매도 시그널 소리"></button></div>
+  <p class="more" hidden>RSI 와 MACD 를 같이 본다. RSI 가 35 밑(매수 쪽)이나 65 위(매도 쪽)로 가면 12봉 동안 대기하고, 그 사이 MACD 히스토그램이 음→양으로 바뀌면 매수, 양→음이면 매도 시그널을 「테슬라 매수 시그널」처럼 읽는다. 봉이 닫힐 때만 보니 선 알림보다 늦고 드물다. 대기 동안 RSI 가 30·70 까지 갔으면 「강」, 아니면 「약」. MACD 가 0 위에서 난 매수(0 아래에서 난 매도)는 「추세 순응」, 반대면 「역추세」. 표의 매수/매도 칸과 차트 화살표가 이것이다.</p>
   <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
 </div>
 <div id="markets"></div>
@@ -653,6 +659,12 @@ function popMenu(btn, menu, onOpen) {
 popMenu($("#colbtn"), $("#colmenu"),
         () => $("#colmenu").querySelectorAll("input").forEach(x => x.checked = !hiddenCols.has(x.value)));
 popMenu($("#setbtn"), $("#setmenu"));
+// ⓘ: PC 는 마우스를 올리면 title 이 뜨고, 폰은 눌러서 아래에 펼친다
+$("#setmenu").querySelectorAll(".info").forEach(b => b.onclick = () => {
+  const more = b.closest(".mrow").nextElementSibling;
+  more.hidden = !more.hidden;
+  b.setAttribute("aria-expanded", !more.hidden);
+});
 document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => m(false)); });
 addEventListener("scroll", e => { if (!e.target.closest?.(".menu")) menus.forEach(m => m(false)); }, true);
 addEventListener("resize", () => menus.forEach(m => m(false)));
