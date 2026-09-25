@@ -97,10 +97,14 @@ Hugging Face 에서 저절로 받는다. 공개 모델이라 토큰은 필요 �
 
 ```bash
 python -m venv .venv_tts
-.venv_tts/Scripts/pip install torch --index-url https://download.pytorch.org/whl/cu124
+.venv_tts/Scripts/pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 .venv_tts/Scripts/pip install qwen-tts soundfile
 .venv_tts/Scripts/python tts_server.py
 ```
+
+`torchaudio` 를 `torch` 와 같이 먼저 까는 것이 중요하다. 빼먹으면 `qwen-tts` 가 PyPI 의 최신 `torchaudio` 를
+끌어와 `torch` 와 짝이 안 맞고, 서버가 `WinError 127` 로 죽는다. 그랬다면
+`.venv_tts/Scripts/pip install torchaudio==<torch 와 같은 버전> --index-url https://download.pytorch.org/whl/cu124`.
 
 `준비됨: http://127.0.0.1:47650` 이 나오면 된 것이다. 이 창을 켜 둔 채 다른 창에서 `python kis_web.py` 를 띄운다.
 
