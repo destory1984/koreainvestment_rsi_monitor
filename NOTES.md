@@ -63,8 +63,12 @@
     미국은 `US_HOLIDAYS`(2026~2027 뉴욕증권거래소 종일 휴장, 조기 폐장은 뺌) + `us_closed`. `us_session`·`us_day_session` 이 휴일을 안다.
     미국 밤 세션은 다음 날 장에 딸린 것으로 보고 다음 날이 휴일이면 쉰다고 본다 — **확인 못 함** (노동절 전날 밤 등에서 볼 것).
     서버가 `state.holidays`·웹소켓 `holidays` 로 주고, 화면 장 상태가 「휴장 (휴일)」.
+    억제·켤 때 알림은 안 보내고, `muted` 면 `disable_notification`. 설정 `telegram`, API `/api/telegram` `/api/telegram/test`.
+    오류 글에서 토큰을 지운다. **실제로 보내 본 적은 아직 없다.**
 24. **규칙 시험** (09-25) — `tests/test_rules.py`, 표준 `unittest`(pytest 없음). Gate·시그널·`muted`·`set_mute`·`fill_after`·`read_log`·
     세션·휴장일·`fetch_kr_bars`(가짜 응답)·되감기 채점. 일부러 규칙을 망가뜨리면(재무장 폭 0, 결과 부호 반대) 잡는 것을 봤다.
+25. **텔레그램** (09-25) — `kis_telegram.py`. 토큰·대화방은 환경변수 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`(Webull 판 `C:\_c\rsi\rsi_monitor.py` 가
+    setx 로 넣어 둔 것, 이 PC 에 있다) → `kis_config.json` 의 `telegram_token`/`telegram_chat`. `setup`·`test` 명령. 스레드 줄로 보낸다.
 
 ## 채점 결과 (09-25 첫 번째, 미국 11종목, 09-14~09-25, 60분 뒤)
 
@@ -139,7 +143,7 @@
 
 1. 09-28(월) 장중: 위 「아직 확인 못 한 것」 — 국내 실시간, 자동 시작, 알림 시간대.
 2. 10-02(금) 17:30 예약 작업이 채점을 다시 돌리고 알린다 → 사용자와 규칙 변경을 정하고 **TODO 4번 종목별 선**.
-3. 그 뒤 후보: 수집 시간 줄이기, 텔레그램 알림, 넥스트레이드 실시간(국내 15:30 뒤).
+3. 그 뒤 후보: 수집 시간 줄이기, 넥스트레이드 실시간(국내 15:30 뒤).
 
 ## 파일
 
@@ -152,6 +156,7 @@
 | `kis_replay.py` | 알림 채점(되감기, 미국·국내) + `--collect`(주간거래 분봉 모으기). 캐시 `replay_cache/` |
 | `static/index.html` | 웹 화면 한 파일 (lightweight-charts 4.2.3, CDN) |
 | `tts_server.py` / `tts_make.py` | 로컬 Qwen3-TTS 서버 / 그것을 잠깐 띄워 녹음하고 내리기 |
+| `kis_telegram.py` | 텔레그램 보내기 (`Telegram`, `alert_text`/`signal_text`, `setup`/`test` 명령) |
 | `tests/test_rules.py` | 규칙 시험 (`python -m unittest discover tests`) |
 | `collect_day.vbs` | 작업 스케줄러가 창 없이 `--collect` 를 돌리게 (Git Bash 경유) |
 | `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25.png` | |
@@ -162,7 +167,7 @@
 
 ## 시험할 때
 
-- **규칙을 고치면 `python -m unittest discover tests` 부터** (29개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
+- **규칙을 고치면 `python -m unittest discover tests` 부터** (33개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
   `Gate` 시험은 시각을 `N`(10억 초)부터 준다 — 첫 쿨다운이 0 초부터 세어진다.
 - 키: `source ~/.bashrc` 하거나, 이제는 `load_keys` 가 `.bashrc` 를 직접 읽는다. 키 값은 화면에 찍지 않는다.
 - Git Bash 에서 한글: `PYTHONIOENCODING=utf-8`.

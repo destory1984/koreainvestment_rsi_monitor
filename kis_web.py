@@ -26,6 +26,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 import kis_alert as al
+import kis_telegram as tg
 import kis_rsi as k
 import kis_signal as ks
 
@@ -64,6 +65,8 @@ class Hub:
             self.settings["sound_sessions"].setdefault(key, True)
         self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
+        self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
+        self.tg = tg.Telegram()
         self.signals = {}         # 종목 -> 닫힌 봉들에서 난 시그널 전부
         self.closed = set()       # 새 봉이 생겨 앞 봉이 닫힌 종목
         self.clients = set()
@@ -420,6 +423,8 @@ class Hub:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             print(f"{ev['t']} 알림 {b.name} {ev['text']} RSI {v:.2f}"
                   + (f" — 억제 ({ev['suppressed']})" if ev["suppressed"] else ""), flush=True)
+            if not ev["suppressed"] and not a["start"] and self.settings["telegram"]:
+                self.tg.send(tg.alert_text(b.name, b.excd, ev), silent=bool(ev["muted"]))
             if not ev["suppressed"] and self.settings["sound"] and not ev["muted"]:
                 strong = a["strength"] == "strong"
                 self.voice.say(said if (not strong or al.SAY_STRONG) else "",
@@ -452,6 +457,8 @@ class Hub:
                 with ALERT_LOG.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(ev, ensure_ascii=False) + "\n")
                 print(f"{ev['t']} 시그널 {b.name} {ev['text']} RSI {x.rsi:.2f}", flush=True)
+                if self.settings["telegram"]:
+                    self.tg.send(tg.signal_text(b.name, b.excd, ev), silent=bool(ev["muted"]))
                 if self.settings["sound"] and self.settings["signal_sound"] and not ev["muted"]:
                     self.voice.say(al.say_signal(b.name, s, x.side),
                                    "full" if x.grade == "강" else "short")
@@ -579,6 +586,7 @@ class Hub:
                 "signal_sound": self.settings["signal_sound"],
                 "sound_sessions": self.settings["sound_sessions"], "quiet": self.settings["quiet"],
                 "session_names": SOUND_SESSIONS, "holidays": self.holidays(),
+                "telegram": {"ready": self.tg.ready, "on": self.settings["telegram"], "error": self.tg.last_error},
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -747,6 +755,22 @@ def api_signal_sound(on: bool = Body(..., embed=True)):
     hub.settings["signal_sound"] = bool(on)
     hub.set_sound(hub.settings["sound"])   # 설정 파일에 같이 적는다
     return {"signal_sound": hub.settings["signal_sound"]}
+
+
+@app.post("/api/telegram")
+def api_telegram(on: bool = Body(..., embed=True)):
+    hub.settings["telegram"] = bool(on)
+    hub.save_settings()
+    return {"on": hub.settings["telegram"], "ready": hub.tg.ready}
+
+
+@app.post("/api/telegram/test")
+async def api_telegram_test():
+    try:
+        await asyncio.to_thread(hub.tg.send_now, "RSI Monitor 시험 메시지 (웹 화면에서 보냄)")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
 
 
 @app.post("/api/sound/test")

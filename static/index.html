@@ -56,6 +56,7 @@
   .menu label { display: flex; gap: 6px; align-items: center; padding: 3px 8px; border-radius: 4px; cursor: pointer; }
   .menu label:hover { background: var(--sel); }
   .menu input { margin: 0; }
+  .menu .mbtns { display: inline-flex; gap: 8px; align-items: center; }
   .menu .mrow { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 3px 8px; }
   .menu .mlabel { display: grid; gap: 1px; }
   .menu .mlabel small { color: var(--muted); font-size: calc(var(--fs) * .85); max-width: calc(var(--fs) * 22); }
@@ -173,6 +174,10 @@
   <div class="mrow"><span class="mlabel">조용한 시각<small>이 PC 시각. 23:00~07:00 처럼 자정을 넘어도 된다</small></span>
     <button class="switch" id="quiet" role="switch" aria-checked="false" aria-label="조용한 시각"></button></div>
   <div class="mrow qtimes"><input type="time" id="qfrom" aria-label="조용한 시각 시작"> ~ <input type="time" id="qto" aria-label="조용한 시각 끝"></div>
+  <div class="mrow"><span class="mlabel"><span>텔레그램 <button type="button" class="info" aria-expanded="false" title="선 알림·시그널이 울릴 때 텔레그램으로도 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다." aria-label="자세히">ⓘ</button></span><small id="tgnote">폰으로도 받기</small></span>
+    <span class="mbtns"><button class="hbtn" id="tgtest" title="시험 메시지를 한 번 보낸다">보내 보기</button>
+    <button class="switch" id="telegram" role="switch" aria-checked="false" aria-label="텔레그램으로 보내기"></button></span></div>
+  <p class="more" hidden>선 알림·시그널이 울릴 때 텔레그램으로도 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다.</p>
   <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
 </div>
 <div id="markets"></div>
@@ -752,6 +757,24 @@ $("#sound").onclick = async () => {
   if (res.ok) setSound((await res.json()).sound);
 };
 
+function setTelegram(t) {
+  cfg.telegram = t;
+  $("#telegram").setAttribute("aria-checked", t.ready && t.on);
+  $("#telegram").disabled = $("#tgtest").disabled = !t.ready;
+  $("#tgnote").textContent = !t.ready ? "설정 안 됨 — python kis_telegram.py setup"
+                           : t.error ? `마지막 보내기 실패: ${t.error}` : "폰으로도 받기";
+}
+$("#telegram").onclick = async () => {
+  const res = await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ on: !cfg.telegram.on }) });
+  if (res.ok) setTelegram({ ...cfg.telegram, ...(await res.json()) });
+};
+$("#tgtest").onclick = async () => {
+  setMsg("텔레그램 보내는 중…");
+  const res = await fetch("/api/telegram/test", { method: "POST" }).catch(() => null);
+  if (res && res.ok) return setMsg("텔레그램으로 시험 메시지를 보냈다");
+  setMsg("텔레그램 보내기 실패 — " + (res ? (await res.json()).detail : "서버와 끊김"), true);
+};
 $("#soundtest").onclick = async () => {
   const res = await fetch("/api/sound/test", { method: "POST", headers: { "Content-Type": "application/json" },
                                                body: JSON.stringify({ symb: selected || "" }) });
@@ -869,6 +892,7 @@ async function loadState() {
   setSound(st.sound);
   setSigSound(st.signal_sound);
   setSoundWhen(st);
+  setTelegram(st.telegram || { ready: false, on: false });
   renderMarkets(st.markets);
   events = st.events || [];
   renderEvents();

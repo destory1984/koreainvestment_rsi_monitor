@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 import tempfile
+import time
 import types
 import unittest
 from collections import deque
@@ -19,6 +20,7 @@ import kis_alert as al      # noqa: E402
 import kis_replay as rp     # noqa: E402
 import kis_rsi as k         # noqa: E402
 import kis_signal as ks     # noqa: E402
+import kis_telegram as tg   # noqa: E402
 import kis_web as w         # noqa: E402
 
 T0 = datetime(2026, 9, 24, 10, 0)
@@ -325,6 +327,48 @@ class KrBarsTest(unittest.TestCase):
         self.assertEqual(times[0], "0900")
         self.assertEqual(times[-1], "1530")                     # 종가 단일가 봉까지
         self.assertEqual(len(bars), 77)
+
+
+# ── 텔레그램 ───────────────────────────────────────────────────
+class TelegramTest(unittest.TestCase):
+    def test_texts(self):
+        ev = {"zone": "above", "strength": "strong", "text": "70 초과", "rsi": 71.26, "price": 412.3}
+        self.assertEqual(tg.alert_text("TSLA", "NAS", ev), "🔴 TSLA 70 초과 ‼ · RSI 71.3 · $412.30")
+        ev = {"zone": "below", "strength": "warn", "text": "35 미만", "rsi": 34.0, "price": 286500.0}
+        self.assertEqual(tg.alert_text("삼성전자", "KRX", ev), "🔵 삼성전자 35 미만 · RSI 34.0 · 286,500원")
+        ev = {"side": "buy", "text": "매수 시그널 (강, 추세 순응)", "rsi": 41.0, "price": 0.5123}
+        self.assertEqual(tg.signal_text("POET", "NAS", ev), "📈 POET 매수 시그널 (강, 추세 순응) · RSI 41.0 · $0.5123")
+
+    def test_error_hides_token(self):
+        def boom(url, **kw):
+            raise ConnectionError(f"failed {url}")
+        with mock.patch.object(tg.requests, "post", boom):
+            with self.assertRaises(RuntimeError) as cm:
+                tg.call("123:SECRET", "sendMessage", chat_id=1, text="x")
+        self.assertNotIn("SECRET", str(cm.exception))
+
+    def test_not_ready_does_nothing(self):
+        with mock.patch.object(tg, "load", lambda: (None, None)):
+            t = tg.Telegram()
+        t.send("x")
+        self.assertIsNone(t.thread)
+        with self.assertRaises(RuntimeError):
+            t.send_now("x")
+
+    def test_send_passes_silent(self):
+        sent = []
+
+        def post(url, json=None, timeout=None):
+            sent.append(json)
+            return types.SimpleNamespace(json=lambda: {"ok": True, "result": {}})
+        with mock.patch.object(tg, "load", lambda: ("tok", "42")), mock.patch.object(tg.requests, "post", post):
+            t = tg.Telegram()
+            t.send("a", silent=True)
+            for _ in range(100):
+                if sent:
+                    break
+                time.sleep(0.01)
+        self.assertEqual(sent[0], {"chat_id": "42", "text": "a", "disable_notification": True})
 
 
 # ── 되감기 채점 ────────────────────────────────────────────────
