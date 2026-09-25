@@ -69,6 +69,11 @@
     세션·휴장일·`fetch_kr_bars`(가짜 응답)·되감기 채점. 일부러 규칙을 망가뜨리면(재무장 폭 0, 결과 부호 반대) 잡는 것을 봤다.
 25. **텔레그램** (09-25) — `kis_telegram.py`. 토큰·대화방은 환경변수 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`(Webull 판 `C:\_c\rsi\rsi_monitor.py` 가
     setx 로 넣어 둔 것, 이 PC 에 있다) → `kis_config.json` 의 `telegram_token`/`telegram_chat`. `setup`·`test` 명령. 스레드 줄로 보낸다.
+26. **분봉 캐시를 SQLite 로** (09-25) — `replay_cache/bars.db`, 표 `bars`(excd, symb, nmin, t, OHLCV, 키 앞 넷)·`tickers`(night).
+    WAL, 기다림 30초. JSON 13개(봉 21,820)를 옮겼고 원본은 `replay_cache/json_backup/`. 옮기기 전후 되감기 출력이 같았다.
+    3.3MB → 1.8MB. 까닭: 30분 수집과 되감기가 겹쳐도 안전, 새 봉만 넣으니 기간이 길어도 쓰기가 늘 몇 ms.
+    **쓰는 동안 DB 가 잠기니 네트워크는 다 받은 뒤에 쓰고 곧 commit** (`load_bars`). `time_kr` 은 안 넣는다.
+    미국 5분봉은 한국투자증권이 5주쯤(TSLA 08-21~)까지만 주고, 국내 1분봉은 6개월(03-27~)도 준다.
 
 ## 채점 결과 (09-25 첫 번째, 미국 11종목, 09-14~09-25, 60분 뒤)
 
@@ -153,7 +158,7 @@
 | `kis_web.py` | FastAPI 서버 `Hub`: 종목(`_add`, `_bars`, `_tf_books`, `load_tf`, `reorder`, `set_night`), 실시간(`kis_loop`, `session_loop`), 알림·시그널(`check_alerts`, `check_signals`, `muted`), 지수 띠, `row`/`mtf`/`state`. API `/api/state` `/api/chart/{symb}` `/api/tickers` `/api/order` `/api/night` `/api/mute` `/api/sound` `/api/signal-sound` `/api/sound-when` `/api/sound/test` `/ws`. 옵션 `--log`, 중복 막기 |
 | `kis_alert.py` | `Gate`(선·재무장·쿨다운, `check(v, now)`), 읽는 법 `TTS_SAY_AS`, 문장 `say_breach`/`say_signal`/`phrases`, `Voice`(캐시, 로컬/Edge/SAPI) |
 | `kis_signal.py` | 매수·매도 시그널 (`rsi_band`, `signals`) |
-| `kis_replay.py` | 알림 채점(되감기, 미국·국내) + `--collect`(주간거래 분봉 모으기). 캐시 `replay_cache/` |
+| `kis_replay.py` | 알림 채점(되감기, 미국·국내) + `--collect`(주간거래 분봉 모으기). 분봉은 `replay_cache/bars.db`(`db`, `put_bars`, `get_bars`, `get_night`/`set_night`) |
 | `static/index.html` | 웹 화면 한 파일 (lightweight-charts 4.2.3, CDN) |
 | `tts_server.py` / `tts_make.py` | 로컬 Qwen3-TTS 서버 / 그것을 잠깐 띄워 녹음하고 내리기 |
 | `kis_telegram.py` | 텔레그램 보내기 (`Telegram`, `alert_text`/`signal_text`, `setup`/`test` 명령) |
@@ -167,7 +172,7 @@
 
 ## 시험할 때
 
-- **규칙을 고치면 `python -m unittest discover tests` 부터** (33개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
+- **규칙을 고치면 `python -m unittest discover tests` 부터** (37개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
   `Gate` 시험은 시각을 `N`(10억 초)부터 준다 — 첫 쿨다운이 0 초부터 세어진다.
 - 키: `source ~/.bashrc` 하거나, 이제는 `load_keys` 가 `.bashrc` 를 직접 읽는다. 키 값은 화면에 찍지 않는다.
 - Git Bash 에서 한글: `PYTHONIOENCODING=utf-8`.

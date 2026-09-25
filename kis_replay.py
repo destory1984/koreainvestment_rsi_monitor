@@ -34,7 +34,10 @@ webull_rsi_monitor 의 rsi_replay.py 와 같은 생각이다.
 데이터
 
 한국투자증권 해외주식 분봉을 120개씩 거슬러 받는다 (정규장·프리·애프터).
-받은 것은 replay_cache/ 에 쌓아 두고 다음에 새로 받은 것과 합친다.
+받은 것은 replay_cache/bars.db (SQLite) 에 쌓아 두고 다음에 새로 받은 것과 합친다.
+DB 로 둔 까닭: 30분마다 도는 --collect 와 손으로 돌리는 되감기가 겹쳐도 안전하게 쓰고,
+쌓인 기간이 길어져도 새 봉만 넣으니 쓰는 시간이 늘지 않는다 (6개월 1종목 2.4MB, 봉 12개 넣기 몇 ms).
+예전 JSON 캐시(replay_cache/*.json)가 있으면 처음 열 때 DB 로 옮기고 원본은 replay_cache/json_backup/ 에 둔다.
 주간거래(한국 낮) 분봉은 한국투자증권이 지금 세션 것만 주므로, 되감을 때마다 쌓아야
 날이 갈수록 오버나이트 알림도 채점할 수 있다. 웹 화면과 같은 규칙으로 오버나이트 봉을
 넣을 종목만 넣는다 (최근 오버나이트 5분 칸 절반 넘게 체결, 또는 kis_settings.json 의 "night").
@@ -63,11 +66,12 @@ webull_rsi_monitor 의 rsi_replay.py 와 같은 생각이다.
 받아 둬야 한다. PC 가 언제 켜져 있을지 모르니 30분마다 돌리고, 스스로 가린다:
   - 주간거래 중이거나 끝난 지 1시간 안이 아니면 바로 끝낸다
   - 종목마다 쌓아 둔 주간거래 봉이 30분 안의 것이면 건너뛴다
-받은 봉은 replay_cache/ 에 합치고, 한 줄씩 replay_cache/collect.log 에 남긴다.
+받은 봉은 replay_cache/bars.db 에 넣고, 한 줄씩 replay_cache/collect.log 에 남긴다.
 """
 import argparse
 import csv
 import json
+import sqlite3
 import sys
 import time
 from collections import defaultdict
@@ -85,6 +89,7 @@ except Exception:
 
 HERE = Path(__file__).parent
 CACHE = HERE / "replay_cache"
+DB = CACHE / "bars.db"
 WATCHLIST = HERE / "kis_watchlist.json"
 SETTINGS = HERE / "kis_settings.json"
 HORIZONS = (15, 30, 60)
@@ -126,6 +131,84 @@ def fetch_history(appkey, secret, excd, symb, nmin, days):
     return bars
 
 
+# ── 저장 (SQLite) ─────────────────────────────────────────────
+BAR_FIELDS = ("open", "high", "low", "close", "volume")
+
+
+def db(path=None):
+    """분봉 DB 를 연다. 다른 프로세스가 쓰는 중이면 30초까지 기다린다."""
+    path = path or DB
+    path.parent.mkdir(exist_ok=True)
+    con = sqlite3.connect(path, timeout=30)
+    con.execute("pragma journal_mode=wal")   # 읽는 동안에도 다른 쪽이 쓸 수 있게
+    con.executescript("""
+        create table if not exists bars (
+            excd text, symb text, nmin int, t text,          -- t 는 현지 시각 'YYYYMMDD HHMMSS'
+            open real, high real, low real, close real, volume int,
+            primary key (excd, symb, nmin, t)) without rowid;
+        create table if not exists tickers (
+            excd text, symb text, nmin int, night int,       -- night: 오버나이트 봉을 되감기에 넣을지
+            primary key (excd, symb, nmin));
+    """)
+    if path == DB:
+        migrate(con)
+    return con
+
+
+def put_bars(con, excd, symb, nmin, bars, replace=True):
+    """봉들을 넣는다. replace 가 아니면 이미 있는 봉은 두고 없는 것만. 새로 생긴 봉 수를 돌려준다."""
+    rows = [(excd, symb, nmin, b["time_us"], *(b[f] for f in BAR_FIELDS)) for b in bars]
+    if not rows:
+        return 0
+    times = {r[3] for r in rows}
+    have = {t for (t,) in con.execute("select t from bars where excd=? and symb=? and nmin=? and t between ? and ?",
+                                      (excd, symb, nmin, min(times), max(times)))}
+    verb = "insert or replace" if replace else "insert or ignore"
+    con.executemany(f"{verb} into bars values (?,?,?,?,?,?,?,?,?)", rows)
+    return len(times - have)
+
+
+def get_bars(con, excd, symb, nmin):
+    """쌓아 둔 봉 전부 (오래된 것부터)."""
+    cur = con.execute("select t, open, high, low, close, volume from bars "
+                      "where excd=? and symb=? and nmin=? order by t", (excd, symb, nmin))
+    return [dict(zip(("time_us",) + BAR_FIELDS, r)) for r in cur]
+
+
+def get_night(con, excd, symb, nmin):
+    r = con.execute("select night from tickers where excd=? and symb=? and nmin=?", (excd, symb, nmin)).fetchone()
+    return bool(r and r[0])
+
+
+def set_night(con, excd, symb, nmin, on):
+    con.execute("insert or replace into tickers values (?,?,?,?)", (excd, symb, nmin, int(bool(on))))
+
+
+def find_excd(con, symb, nmin):
+    """쌓아 둔 것에서 종목의 거래소를 찾는다 (--offline 에서 'TSLA' 처럼 줬을 때)."""
+    r = con.execute("select excd from bars where symb=? and nmin=? limit 1", (symb, nmin)).fetchone()
+    return r and r[0]
+
+
+def migrate(con):
+    """예전 JSON 캐시를 DB 로 옮기고 원본은 json_backup/ 으로 치운다 (지우지 않는다)."""
+    old = sorted(CACHE.glob("*_*_*.json"))
+    if not old:
+        return
+    backup = CACHE / "json_backup"
+    backup.mkdir(exist_ok=True)
+    n = 0
+    for path in old:
+        excd, *mid, nmin = path.stem.split("_")
+        symb = "_".join(mid)
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        n += put_bars(con, excd, symb, int(nmin), cached["bars"].values())
+        set_night(con, excd, symb, int(nmin), cached.get("night"))
+        con.commit()
+        path.rename(backup / path.name)
+    print(f"replay_cache: JSON {len(old)}개(봉 {n}개)를 bars.db 로 옮겼다. 원본은 json_backup/ 에 있다.", flush=True)
+
+
 def night_on(appkey, secret, excd, symb, nmin):
     """웹 화면과 같은 규칙: 오버나이트 봉을 넣을지와, 지금 세션의 주간거래 분봉."""
     day, have, of = k.fetch_night(appkey, secret, excd, symb, nmin)
@@ -145,15 +228,15 @@ def collect(tickers, nmin, fresh_min=30, grace_min=60):
         log.append("주간거래 시간이 아님")
     else:
         appkey, secret = k.load_keys()
+        con = db()
         cutoff = (now - timedelta(minutes=fresh_min)).strftime("%Y%m%d %H%M%S")
         for t in tickers:
             excd, symb = k.resolve(appkey, secret, t)
             if excd not in k.DAY_EXCD:
                 continue
-            path = CACHE / f"{excd}_{symb}_{nmin}.json"
-            cached = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"bars": {}, "night": False}
-            night = [x for x in cached["bars"] if session(ts(x)) == "주간"]
-            if night and max(night) >= cutoff:
+            recent = con.execute("select t from bars where excd=? and symb=? and nmin=? and t>=?",
+                                 (excd, symb, nmin, cutoff)).fetchall()
+            if any(session(ts(x)) == "주간" for (x,) in recent):
                 log.append(f"{symb} 최신")
                 continue
             try:
@@ -161,13 +244,12 @@ def collect(tickers, nmin, fresh_min=30, grace_min=60):
             except Exception as e:
                 log.append(f"{symb} 실패 {e}")
                 continue
-            new = [b for b in day if b["time_us"] not in cached["bars"]]
-            cached["bars"].update({b["time_us"]: b for b in day})
-            cached["night"] = on
-            CACHE.mkdir(exist_ok=True)
-            path.write_text(json.dumps(cached), encoding="utf-8")
-            log.append(f"{symb} +{len(new)}")
+            new = put_bars(con, excd, symb, nmin, day)
+            set_night(con, excd, symb, nmin, on)
+            con.commit()
+            log.append(f"{symb} +{new}")
             time.sleep(0.12)
+        con.close()
     line = f"{datetime.now():%Y-%m-%d %H:%M} (미국 {now:%m-%d %H:%M}) " + ", ".join(log)
     CACHE.mkdir(exist_ok=True)
     with open(CACHE / "collect.log", "a", encoding="utf-8") as f:
@@ -175,28 +257,27 @@ def collect(tickers, nmin, fresh_min=30, grace_min=60):
     print(line)
 
 
-def load_bars(appkey, secret, excd, symb, nmin, days, offline):
+def load_bars(con, appkey, secret, excd, symb, nmin, days, offline):
     """쌓아 둔 것과 새로 받은 것을 합친다. 오버나이트 봉을 안 넣는 종목이면 빼고 돌려준다."""
-    path = CACHE / f"{excd}_{symb}_{nmin}.json"
-    cached = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"bars": {}, "night": False}
-    bars, night = cached["bars"], cached["night"]
-    if excd == "KRX":
-        if not offline:
-            got = k.fetch_kr_bars(appkey, secret, symb, nmin, need=days * KR_BARS_PER_DAY)
-            bars.update({b["time_us"]: b for b in got})
-            CACHE.mkdir(exist_ok=True)
-            path.write_text(json.dumps({"bars": bars, "night": False}), encoding="utf-8")
-        return [bars[t] for t in sorted(bars) if t[9:] <= k.KRX_CLOSE], False
-    if not offline:
-        bars.update(fetch_history(appkey, secret, excd, symb, nmin, days))
+    # 다 받은 뒤에 한 번에 쓴다. 쓰는 동안은 DB 가 잠기니 그 사이에 네트워크를 기다리지 않는다
+    if not offline and excd == "KRX":
+        got = k.fetch_kr_bars(appkey, secret, symb, nmin, need=days * KR_BARS_PER_DAY)
+        put_bars(con, excd, symb, nmin, got)
+        con.commit()
+    elif not offline:
+        hist = fetch_history(appkey, secret, excd, symb, nmin, days)
         night, day = night_on(appkey, secret, excd, symb, nmin)
-        bars.update({b["time_us"]: b for b in day if b["time_us"] not in bars})
-        CACHE.mkdir(exist_ok=True)
-        path.write_text(json.dumps({"bars": bars, "night": night}), encoding="utf-8")
-    out = [bars[t] for t in sorted(bars)]
+        put_bars(con, excd, symb, nmin, hist.values())
+        put_bars(con, excd, symb, nmin, day, replace=False)   # 정규 쪽에서 받은 봉이 먼저
+        set_night(con, excd, symb, nmin, night)
+        con.commit()
+    bars = get_bars(con, excd, symb, nmin)
+    if excd == "KRX":
+        return [b for b in bars if b["time_us"][9:] <= k.KRX_CLOSE], False
+    night = get_night(con, excd, symb, nmin)
     if not night:
-        out = [b for b in out if session(ts(b["time_us"])) != "주간"]
-    return out, night
+        bars = [b for b in bars if session(ts(b["time_us"])) != "주간"]
+    return bars, night
 
 
 # ── 되감기 ────────────────────────────────────────────────────
@@ -340,17 +421,17 @@ def main():
     if not args.offline:
         appkey, secret = k.load_keys()
     rows, bases = [], {}
+    con = db()
     for t in tickers:
         if args.offline and ":" not in t:
-            found = sorted(CACHE.glob(f"*_{t.upper()}_{args.min}.json"))
-            if not found:
+            excd, symb = find_excd(con, t.upper(), args.min), t.upper()
+            if not excd:
                 print(f"{t}: 쌓아 둔 것 없음")
                 continue
-            excd, symb = found[0].name.split("_")[0], t.upper()
         else:
             excd, symb = k.resolve(appkey, secret, t)
         try:
-            bars, night = load_bars(appkey, secret, excd, symb, args.min, args.days, args.offline)
+            bars, night = load_bars(con, appkey, secret, excd, symb, args.min, args.days, args.offline)
         except Exception as e:
             print(f"{symb}: 건너뜀 — {e}")
             continue

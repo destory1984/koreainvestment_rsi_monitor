@@ -391,6 +391,64 @@ class ReplayTest(unittest.TestCase):
         self.assertAlmostEqual(s["hit"], 2 / 3)
         self.assertAlmostEqual(s["flat"], 2 / 5)
 
+    def test_db_put_get_night(self):
+        con = rp.db(temp_path(".db"))
+        bars = bars_from([100, 101, 102])
+        self.assertEqual(rp.put_bars(con, "NAS", "TSLA", 5, bars), 3)
+        self.assertEqual(rp.put_bars(con, "NAS", "TSLA", 5, bars), 0)          # 같은 봉은 새로 안 셈
+        changed = [{**bars[0], "close": 999}, {**bars[2], "time_us": "20260924 102000"}]
+        self.assertEqual(rp.put_bars(con, "NAS", "TSLA", 5, changed, replace=False), 1)
+        got = rp.get_bars(con, "NAS", "TSLA", 5)
+        self.assertEqual([b["close"] for b in got], [100, 101, 102, 102])      # replace=False 면 옛 값을 둔다
+        rp.put_bars(con, "NAS", "TSLA", 5, changed)
+        self.assertEqual(rp.get_bars(con, "NAS", "TSLA", 5)[0]["close"], 999)
+        self.assertEqual(rp.get_bars(con, "NAS", "MU", 5), [])
+        self.assertFalse(rp.get_night(con, "NAS", "TSLA", 5))
+        rp.set_night(con, "NAS", "TSLA", 5, True)
+        self.assertTrue(rp.get_night(con, "NAS", "TSLA", 5))
+        self.assertEqual(rp.find_excd(con, "TSLA", 5), "NAS")
+
+    def test_db_two_writers(self):
+        # 되감기와 수집이 같은 DB 를 열어 둔 채 번갈아 쓴다. 한쪽이 쓰고 곧 commit 하면 다른 쪽도 쓴다.
+        # (쓰는 중에 commit 하지 않고 붙들고 있으면 다른 쪽은 30초 기다리다 실패한다 — 그래서 load_bars 는
+        # 네트워크를 다 받은 뒤에 쓴다)
+        path = temp_path(".db")
+        a, b = rp.db(path), rp.db(path)
+        rp.get_bars(b, "NAS", "A", 5)                                          # b 가 읽는 중에도
+        rp.put_bars(a, "NAS", "A", 5, bars_from([1, 2]))
+        a.commit()
+        rp.put_bars(b, "NAS", "B", 5, bars_from([3]))
+        b.commit()
+        self.assertEqual(len(rp.get_bars(rp.db(path), "NAS", "A", 5)), 2)
+        self.assertEqual(len(rp.get_bars(rp.db(path), "NAS", "B", 5)), 1)
+
+    def test_migrate_json(self):
+        cache = Path(tempfile.mkdtemp())
+        bars = bars_from([100, 101])
+        (cache / "NAS_TSLA_5.json").write_text(json.dumps(
+            {"bars": {b["time_us"]: b for b in bars}, "night": True}), encoding="utf-8")
+        with mock.patch.object(rp, "CACHE", cache), mock.patch.object(rp, "DB", cache / "bars.db"):
+            con = rp.db()
+            self.assertEqual(len(rp.get_bars(con, "NAS", "TSLA", 5)), 2)
+            self.assertTrue(rp.get_night(con, "NAS", "TSLA", 5))
+        self.assertFalse((cache / "NAS_TSLA_5.json").exists())
+        self.assertTrue((cache / "json_backup" / "NAS_TSLA_5.json").exists())
+
+    def test_collect_adds_night_bars(self):
+        cache = Path(tempfile.mkdtemp())
+        night = bars_from([10, 11], t0=datetime(2026, 9, 24, 21, 0))
+        with mock.patch.object(rp, "CACHE", cache), mock.patch.object(rp, "DB", cache / "bars.db"), \
+                mock.patch.object(k, "us_day_session", lambda t=None: True), \
+                mock.patch.object(k, "load_keys", lambda: ("a", "s")), \
+                mock.patch.object(k, "resolve", lambda a, s, t: tuple(t.split(":"))), \
+                mock.patch.object(rp, "night_on", lambda *a: (True, night)), \
+                mock.patch.object(rp.time, "sleep", lambda s: None), mock.patch("builtins.print"):
+            rp.collect(["NAS:TSLA", "KRX:005930"], 5)
+            con = rp.db()
+            self.assertEqual(len(rp.get_bars(con, "NAS", "TSLA", 5)), 2)
+            self.assertEqual(rp.get_bars(con, "KRX", "005930", 5), [])        # 국내는 주간거래가 없다
+        self.assertIn("TSLA +2", (cache / "collect.log").read_text(encoding="utf-8"))
+
     def test_kr_session(self):
         self.assertEqual(rp.session(datetime(2026, 9, 23, 10, 0), kr=True), "정규")
         self.assertEqual(rp.session(datetime(2026, 9, 23, 21, 0)), "주간")
