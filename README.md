@@ -302,6 +302,16 @@ Register-ScheduledTask -TaskName "KIS 주간거래 분봉 수집" -Trigger $t -A
 
 경로(`C:\_c\koreainvest`)는 자기 폴더로 바꾼다. 지우려면 `Unregister-ScheduledTask -TaskName "KIS 주간거래 분봉 수집"`.
 
+### 규칙 시험
+
+```bash
+python -m unittest discover tests
+```
+
+알림 선·재무장·쿨다운, 매수·매도 시그널, 소리 가리기(종목·조용한 시각·세션), 알림 뒤 결과, 휴장일,
+국내 분봉(KRX 정규장만), 채점을 가짜 데이터로 시험한다 (29개, 1초 안). 한국투자증권에 접속하지 않고
+알림 기록·설정 파일도 건드리지 않는다. 규칙을 고친 뒤 돌려 본다.
+
 ### 어떻게 계산하나
 
 분봉 120개로 값을 잡아 두고, 체결이 올 때마다 진행 중인 봉의 종가를 바꿔서 다시 계산한다.

@@ -63,6 +63,8 @@
     미국은 `US_HOLIDAYS`(2026~2027 뉴욕증권거래소 종일 휴장, 조기 폐장은 뺌) + `us_closed`. `us_session`·`us_day_session` 이 휴일을 안다.
     미국 밤 세션은 다음 날 장에 딸린 것으로 보고 다음 날이 휴일이면 쉰다고 본다 — **확인 못 함** (노동절 전날 밤 등에서 볼 것).
     서버가 `state.holidays`·웹소켓 `holidays` 로 주고, 화면 장 상태가 「휴장 (휴일)」.
+24. **규칙 시험** (09-25) — `tests/test_rules.py`, 표준 `unittest`(pytest 없음). Gate·시그널·`muted`·`set_mute`·`fill_after`·`read_log`·
+    세션·휴장일·`fetch_kr_bars`(가짜 응답)·되감기 채점. 일부러 규칙을 망가뜨리면(재무장 폭 0, 결과 부호 반대) 잡는 것을 봤다.
 
 ## 채점 결과 (09-25 첫 번째, 미국 11종목, 09-14~09-25, 60분 뒤)
 
@@ -150,6 +152,7 @@
 | `kis_replay.py` | 알림 채점(되감기, 미국·국내) + `--collect`(주간거래 분봉 모으기). 캐시 `replay_cache/` |
 | `static/index.html` | 웹 화면 한 파일 (lightweight-charts 4.2.3, CDN) |
 | `tts_server.py` / `tts_make.py` | 로컬 Qwen3-TTS 서버 / 그것을 잠깐 띄워 녹음하고 내리기 |
+| `tests/test_rules.py` | 규칙 시험 (`python -m unittest discover tests`) |
 | `collect_day.vbs` | 작업 스케줄러가 창 없이 `--collect` 를 돌리게 (Git Bash 경유) |
 | `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25.png` | |
 
@@ -159,6 +162,8 @@
 
 ## 시험할 때
 
+- **규칙을 고치면 `python -m unittest discover tests` 부터** (29개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
+  `Gate` 시험은 시각을 `N`(10억 초)부터 준다 — 첫 쿨다운이 0 초부터 세어진다.
 - 키: `source ~/.bashrc` 하거나, 이제는 `load_keys` 가 `.bashrc` 를 직접 읽는다. 키 값은 화면에 찍지 않는다.
 - Git Bash 에서 한글: `PYTHONIOENCODING=utf-8`.
 - **사용자 서버를 끊지 않게**: REST 조회(분봉·현재가·되감기·수집)는 괜찮다. 실시간(`live`/`rsi`/`watch`/새 `kis_web.py`)은 안 된다.
