@@ -145,6 +145,15 @@ class Hub:
             raise ValueError(f"{symb}: 분봉이 없다.")
         book = k.Book(excd, symb, bars, self.nmin)
         book.night = night
+        if excd != "KRX":
+            # 첫 체결이 올 때까지 등락 칸이 비지 않게 현재가를 한 번 묻는다 (주간거래 시간이면 주간거래 가격)
+            day = k.us_day_session()
+            try:
+                book.price, book.rate = k.fetch_quote(self.appkey, self.secret,
+                                                      k.DAY_EXCD[excd] if day else excd, symb)
+                book.day_quote = day
+            except Exception as e:
+                print(f"{symb}: 현재가 못 받음 — {e}", flush=True)
         self.books[symb] = book
         self.gates[symb] = al.Gate()
         self.signals[symb] = ks.signals(bars[:-1], self.period)
@@ -326,7 +335,8 @@ class Hub:
                   "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
                           + (" (시작 때부터)" if a["start"] else ""),
                   "suppressed": a.get("suppressed", ""),
-                  "muted": "" if a.get("suppressed") else self.muted(b)}
+                  # 켤 때 이미 선 너머였던 것은 기록만 한다. 켤 때마다 알림이 몰려 울리지 않게
+                  "muted": "" if a.get("suppressed") else "켤 때 이미 넘어 있음" if a["start"] else self.muted(b)}
             self.events.appendleft(ev)
             with ALERT_LOG.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")

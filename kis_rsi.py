@@ -239,6 +239,21 @@ MARKETS = [("S&P500", "N", "SPX"), ("나스닥", "N", "COMP"), ("코스피", "U"
            ("원/달러", "X", "FX@KRW"), ("비트코인", "BTC", "KRW-BTC"), ("니케이", "N", "JP#NI225")]
 
 
+def fetch_quote(appkey, secret, excd, symb):
+    """해외주식 현재가 (HHDFS00000300). (현재가, 전일 정규장 종가 대비 등락률 %).
+    excd 에 주간거래 거래소(BAQ 등)를 주면 주간거래 가격이 온다."""
+    token = get_token(appkey, secret)
+    r = requests.get(f"{REST}/uapi/overseas-price/v1/quotations/price",
+                     headers={"authorization": f"Bearer {token}", "appkey": appkey,
+                              "appsecret": secret, "tr_id": "HHDFS00000300", "custtype": "P"},
+                     params={"AUTH": "", "EXCD": excd, "SYMB": symb}, timeout=10)
+    r.raise_for_status()
+    o = r.json().get("output") or {}
+    if not o.get("last"):
+        raise RuntimeError(f"{excd}:{symb} 현재가 없음")
+    return float(o["last"]), float(o["rate"])
+
+
 def fetch_market(appkey, secret, kind, code):
     """지수·환율 하나의 (현재값, 등락률%)."""
     token = get_token(appkey, secret)
