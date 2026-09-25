@@ -7,7 +7,7 @@
 > 한국투자증권과 관계없는 개인 프로젝트다. 한국투자증권이 만들거나 확인한 프로그램이 아니며,
 > 한국투자증권 Open API 를 쓸 뿐이다. 투자 판단과 그 결과는 쓰는 사람의 몫이다.
 
-![웹 화면](docs/screen_v0.1.png)
+![웹 화면](docs/screen_2026-09-25.png)
 
 - **1단계 (됨)** — 분봉과 실시간 체결가로 RSI·MACD 를 계산해서 웹 화면에 보여준다.
 - **2단계** — [webull_rsi_monitor](https://github.com/destory1984/webull_rsi_monitor) 처럼 선을 넘으면 알린다.
