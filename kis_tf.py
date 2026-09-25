@@ -71,7 +71,8 @@ def aggregate(minutes, nmin):
         if key not in keys:
             keys[key] = len(out)
             out.append(({"time_us": key, "open": m["open"], "high": m["high"], "low": m["low"],
-                         "close": m["close"], "volume": m["volume"]}, []))
+                         "close": m["close"], "volume": m["volume"]}, [i]))
+            continue
         b, idx = out[keys[key]]
         b["high"], b["low"], b["close"] = max(b["high"], m["high"]), min(b["low"], m["low"]), m["close"]
         b["volume"] += m["volume"]

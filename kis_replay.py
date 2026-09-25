@@ -102,7 +102,8 @@ KR_BARS_PER_DAY = 11 * 12 + 1   # 국내 09:00~20:00 5분봉 (정규 + 넥스트
 
 
 def ts(t):
-    return datetime.strptime(t, "%Y%m%d %H%M%S")
+    """'YYYYMMDD HHMMSS' → datetime. strptime 보다 열 배쯤 빠르다 (1분봉 채점에서 수백만 번 부른다)."""
+    return datetime(int(t[:4]), int(t[4:6]), int(t[6:8]), int(t[9:11]), int(t[11:13]), int(t[13:15]))
 
 
 def session(t, kr=False):

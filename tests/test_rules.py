@@ -4,6 +4,7 @@
 """
 import asyncio
 import json
+import math
 import sqlite3
 import sys
 import tempfile
@@ -22,6 +23,7 @@ import kis_replay as rp     # noqa: E402
 import kis_rsi as k         # noqa: E402
 import kis_signal as ks     # noqa: E402
 import kis_telegram as tg   # noqa: E402
+import kis_tf as tf         # noqa: E402
 import kis_web as w         # noqa: E402
 
 T0 = datetime(2026, 9, 24, 10, 0)
@@ -617,6 +619,7 @@ class ReplayTest(unittest.TestCase):
                 mock.patch.object(k, "load_keys", lambda: ("a", "s")), \
                 mock.patch.object(k, "resolve", lambda a, s, t: tuple(t.split(":"))), \
                 mock.patch.object(rp, "night_on", lambda *a: (True, night)), \
+                mock.patch.object(rp, "topup_minutes", lambda *a, **kw: 0), \
                 mock.patch.object(rp.time, "sleep", lambda s: None), mock.patch("builtins.print"):
             rp.collect(["NAS:TSLA", "KRX:005930"], 5)
             con = rp.db()
@@ -627,6 +630,98 @@ class ReplayTest(unittest.TestCase):
     def test_kr_session(self):
         self.assertEqual(rp.session(datetime(2026, 9, 23, 10, 0), kr=True), "정규")
         self.assertEqual(rp.session(datetime(2026, 9, 23, 21, 0)), "주간")
+
+
+# ── 1분봉 쌓기·봉 길이 채점 ────────────────────────────────────
+def minutes_from(closes, t0=T0, wiggle=0.0):
+    """1분봉. wiggle 만큼 고가·저가를 벌린다."""
+    return [{"time_us": (t0 + timedelta(minutes=i)).strftime("%Y%m%d %H%M%S"), "open": c,
+             "high": c + wiggle, "low": c - wiggle, "close": c, "volume": 1} for i, c in enumerate(closes)]
+
+
+class MinuteTest(unittest.TestCase):
+    def test_ts_matches_strptime(self):
+        for t in ("20260924 093000", "20261231 235959", "20260101 000000"):
+            self.assertEqual(rp.ts(t), datetime.strptime(t, "%Y%m%d %H%M%S"))
+
+    def test_aggregate(self):
+        m = minutes_from([10, 12, 9, 11, 13, 14, 15], t0=datetime(2026, 9, 24, 9, 58), wiggle=0.5)
+        g = tf.aggregate(m, 5)
+        self.assertEqual([b["time_us"][9:] for b, _ in g], ["095500", "100000"])
+        self.assertEqual([idx for _, idx in g], [[0, 1], [2, 3, 4, 5, 6]])
+        b = g[1][0]
+        self.assertEqual((b["open"], b["high"], b["low"], b["close"], b["volume"]), (9, 15.5, 8.5, 15, 5))
+
+    def test_one_minute_walk_is_the_replay(self):
+        # 1분봉을 1분봉으로 걸으면 kis_replay 되감기(봉마다 저·고·종 RSI 를 Gate 에)와 같은 알림이어야 한다
+        closes = [100 + 6 * math.sin(i / 7) + (i % 5) * 0.3 for i in range(400)]
+        m = minutes_from(closes, wiggle=0.4)
+        want = [(e["i"], e["kind"]) for e in rp.replay_alerts(m, 14)]
+        got = [(e["i"], e["kind"]) for e in tf.walk_alerts(m, tf.aggregate(m, 1), 14, None) if e["i"] >= rp.WARMUP]
+        self.assertTrue(want)
+        self.assertEqual(got, want)
+
+    def test_long_bar_alerts_inside_the_bar(self):
+        # 60분봉 RSI 알림도 봉이 닫히기 전, 선을 넘는 분에 울린다
+        closes = [100 + (i // 60 % 2) * 0.5 for i in range(60 * 16)] + [100 - i * 0.2 for i in range(60)]
+        m = minutes_from(closes)
+        ev = [e for e in tf.walk_alerts(m, tf.aggregate(m, 60), 14, None) if e["i"] >= 60 * 16]
+        self.assertTrue(ev)
+        self.assertLess(ev[0]["i"] - 60 * 16, 59)                            # 봉 끝(59분)보다 앞
+
+    def fake_pages(self, bars):
+        """fetch_bars 흉내: keyb 보다 앞(그 봉 포함) 최신 3개씩."""
+        calls = []
+
+        def fetch(appkey, secret, excd, symb, nmin=5, keyb=""):
+            calls.append((excd, keyb))
+            upto = [b for b in bars if not keyb or b["time_us"].replace(" ", "") <= keyb]
+            return upto[-3:]
+        return fetch, calls
+
+    def test_topup_stops_at_last_stored(self):
+        con = rp.db(temp_path(".db"))
+        m = minutes_from(range(10), t0=datetime(2026, 9, 24, 10, 0))
+        rp.put_bars(con, "NAS", "TSLA", 1, m[:6])
+        fetch, calls = self.fake_pages(m)
+        with mock.patch.object(k, "fetch_bars", fetch), mock.patch.object(rp.time, "sleep", lambda s: None):
+            self.assertEqual(rp.topup_minutes(con, "a", "s", "NAS", "TSLA"), 4)
+        self.assertEqual(len(calls), 2)                                       # 마지막 봉(10:05)이 든 쪽까지만
+        self.assertEqual(len(rp.get_bars(con, "NAS", "TSLA", 1)), 10)
+        self.assertEqual(rp.last_minute(con, "NAS", "TSLA", False), "20260924 100900")
+        self.assertIsNone(rp.last_minute(con, "NAS", "TSLA", True))
+
+    def test_topup_night_uses_day_exchange(self):
+        con = rp.db(temp_path(".db"))
+        m = minutes_from(range(4), t0=datetime(2026, 9, 24, 21, 0))
+        fetch, calls = self.fake_pages(m)
+        with mock.patch.object(k, "fetch_bars", fetch), mock.patch.object(rp.time, "sleep", lambda s: None):
+            self.assertEqual(rp.topup_minutes(con, "a", "s", "NAS", "TSLA", night=True), 4)
+        self.assertEqual(calls[0][0], k.DAY_EXCD["NAS"])
+        self.assertEqual(rp.last_minute(con, "NAS", "TSLA", True), "20260924 210300")
+
+    def test_topup_kr_asks_only_recent_days(self):
+        con = rp.db(temp_path(".db"))
+        two_days_ago = (datetime.now() - timedelta(days=2)).strftime("%Y%m%d 100000")
+        rp.put_bars(con, "KRX", "005930", 1, [{"time_us": two_days_ago, "open": 1, "high": 1, "low": 1,
+                                              "close": 1, "volume": 1}])
+        seen = {}
+
+        def fetch_kr(appkey, secret, code, nmin=5, need=120):
+            seen["need"] = need
+            return []
+        with mock.patch.object(k, "fetch_kr_bars", fetch_kr):
+            rp.topup_minutes(con, "a", "s", "KRX", "005930")
+        self.assertEqual(seen["need"], 3 * 391)                               # 이틀 전 + 오늘
+
+    def test_collect_tickers_adds_extra_once(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "w.json").write_text('["NAS:TSLA", "KRX:005930"]', encoding="utf-8")
+        (d / "c.json").write_text('["nas:msft", "NAS:TSLA"]', encoding="utf-8")
+        with mock.patch.object(rp, "WATCHLIST", d / "w.json"), mock.patch.object(rp, "COLLECT_EXTRA", d / "c.json"):
+            self.assertEqual(rp.collect_tickers(), ["NAS:TSLA", "KRX:005930", "NAS:MSFT"])
+        with mock.patch.object(rp, "WATCHLIST", d / "w.json"), mock.patch.object(rp, "COLLECT_EXTRA", d / "none.json"):
+            self.assertEqual(rp.collect_tickers(), ["NAS:TSLA", "KRX:005930"])
 
 
 if __name__ == "__main__":
