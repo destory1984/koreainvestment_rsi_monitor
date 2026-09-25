@@ -42,7 +42,9 @@ TTS_LOCAL_URL = os.environ.get("KIS_TTS_URL", "http://127.0.0.1:47650/tts")
 TTS_LOCAL_SPEAKER = "Sohee"
 TTS_LOCAL_SEED = 42
 TTS_LOCAL_TIMEOUT = 60        # 첫 문장은 모델이 깨느라 오래 걸릴 수 있다
-TTS_LOCAL_EMOTION = (("시작", "기쁘고 활기찬 목소리로, 또렷하게 말해 주세요."),)
+# 문장에 이 낱말이 있으면 그 감정 지시(instruct)로 읽는다 — (낱말, 지시) 들. 감정을 넣으니 목소리가 별로라 09-26 모두 뺐다.
+# 여기를 바꾸면 캐시 이름(path)이 바뀌어 그 문장을 다시 녹음한다.
+TTS_LOCAL_EMOTION = ()
 TTS_TRIM_LEVEL = 0.01         # 이보다 작은 소리는 빈 자리로 본다
 TTS_TRIM_KEEP = 0.06          # 잘라낸 뒤 앞뒤에 남길 초
 TTS_EDGE_VOICE = "ko-KR-SunHiNeural"
