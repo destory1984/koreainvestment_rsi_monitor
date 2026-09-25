@@ -61,7 +61,7 @@
     봉이 닫힐 때(`closed`)와 켤 때 한 번 돈다. 셋 다 정해지면 `kis_alerts.jsonl` 에 `{"type": "after", "of": ts, "symb", "after"}` 한 줄 → `read_log` 가 붙인다.
     억제·켤 때(`start`, 새로 적는 칸) 알림은 뺀다. 웹소켓 `{"type": "after"}`.
 23. **휴장일** (09-25) — 국내는 국내휴장일조회 CTCA0903R(`kr_holidays`, 오늘부터 24일, `opnd_yn`)을 하루 한 번, `kis_holidays.json` 에 둔다.
-    미국은 `US_HOLIDAYS`(2026~2027 뉴욕증권거래소 종일 휴장, 조기 폐장은 뺌) + `us_closed`. `us_session`·`us_day_session` 이 휴일을 안다.
+    미국은 `holidays.NYSE()`(뉴욕증권거래소 종일 휴장 규칙, 조기 폐장은 뺌) + `us_closed` — 처음엔 손으로 적은 2026~2027 목록이었고 같았다. `us_session`·`us_day_session` 이 휴일을 안다.
     미국 밤 세션은 다음 날 장에 딸린 것으로 보고 다음 날이 휴일이면 쉰다고 본다 — **확인 못 함** (노동절 전날 밤 등에서 볼 것).
     서버가 `state.holidays`·웹소켓 `holidays` 로 주고, 화면 장 상태가 「휴장 (휴일)」.
 24. **규칙 시험** (09-25) — `tests/test_rules.py`, 표준 `unittest`(pytest 없음). Gate·시그널·`muted`·`set_mute`·`fill_after`·`read_log`·
@@ -136,7 +136,8 @@
 - **여러 시간봉은 뒤에서 받는다** — 켤 때 30초쯤 더 걸려서. 국내 60분봉은 1분봉을 묶느라 종목당 10초 남짓.
 - **로컬 TTS 는 녹음할 때만** (VRAM 8GB). 종목을 더했거나 `TTS_SAY_AS` 를 바꾸면 Claude 가 `tts_make.py` 를 돌린다.
   읽는 법을 바꾸면 웹 서버도 다시 켜야 새 문장을 읽는다.
-- **미국 휴장일은 손으로 적는다** — 한국투자증권에 미국 휴장일 조회가 없다. 2028년 것은 2027년 말 전에 `US_HOLIDAYS` 에 더할 것.
+- **미국 휴장일은 `holidays` 꾸러미로** (09-25 사용자 결정) — 한국투자증권 해외결제일자조회(CTOS5011R)는 미국이 쉬는 날 목록에서 빠지지만
+  한 달 남짓만 채워져 있다(담당자가 넣는 듯). 인베스팅닷컴 긁기는 Cloudflare·약관 때문에 안 한다. `exchange_calendars` 는 조기 폐장도 있지만 pandas 가 무겁다.
 - **README 화면 사진은 바꿀 때마다 새 이름** `docs/screen_YYYY-MM-DD.png` (같은 이름은 깃허브 캐시가 옛 것을 보여 준다).
 - **예약 실행은 윈도우 작업 스케줄러로** (Claude 예약 작업은 한 번에 세션 하나라 30분마다 돌리기엔 낭비). 창이 뜨지 않게 `.vbs` 또는 `pythonw`.
 - **설정 화면**: 스위치는 ON/OFF 토글, 설명은 ⓘ (PC 는 마우스 올리기, 폰은 눌러 펼치기 — `title` 은 폰에서 안 보인다).

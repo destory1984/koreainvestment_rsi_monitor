@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import holidays
 import requests
 
 # Git Bash 는 파이프로 붙어서 cp949 로 찍히면 한글이 깨진다.
@@ -368,19 +369,20 @@ def normalize(tr_id, rec):
             "XHMS": rec["STCK_CNTG_HOUR"]}
 
 
-# 뉴욕증권거래소가 하루 종일 쉬는 날 (동부 날짜). 한국투자증권에 미국 휴장일 조회가 없어 적어 둔다.
-# 일찍 닫는 날(추수감사절 다음 날·크리스마스 이브 13:00)은 따지지 않는다. 2028년 것은 그해 전에 더할 것.
-US_HOLIDAYS = {
-    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19",
-    "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18",
-    "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
-}
+# 뉴욕증권거래소가 하루 종일 쉬는 날 (동부 날짜). 한국투자증권에 미국 휴장일 조회가 없어 `holidays` 꾸러미가
+# 규칙으로 셈한 것을 쓴다 (굿프라이데이·대체휴일 포함, 해가 바뀌어도 알아서). 손으로 적던 2026~2027 목록과 같았다.
+# 일찍 닫는 날(추수감사절 다음 날·크리스마스 이브 13:00)은 따지지 않는다.
+NYSE_HOLIDAYS = holidays.NYSE()
+
+
+def us_holidays(years):
+    """그해들 미국 휴장일 ['YYYY-MM-DD', ...] (화면에 보낸다)."""
+    return sorted(d.isoformat() for d in holidays.NYSE(years=years))
 
 
 def us_closed(d):
     """그날(동부 날짜) 미국 장이 쉬는가: 주말이나 휴장일."""
-    return d.weekday() >= 5 or d.isoformat() in US_HOLIDAYS
+    return d.weekday() >= 5 or d in NYSE_HOLIDAYS
 
 
 def us_day_session(now=None):

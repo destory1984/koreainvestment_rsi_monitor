@@ -431,6 +431,8 @@ class SessionTest(unittest.TestCase):
         self.assertIsNone(k.us_session(self.at("2026-09-06 21:00")))      # 노동절 전날 밤
         self.assertEqual(k.us_session(self.at("2026-09-07 21:00")), "day")
         self.assertIsNone(k.us_session(self.at("2026-11-26 10:00")))      # 추수감사절
+        self.assertIsNone(k.us_session(self.at("2028-04-14 10:00")))      # 2028 굿프라이데이 — 목록 없이 셈
+        self.assertEqual(k.us_session(self.at("2026-10-12 10:00")), "regular")   # 콜럼버스데이는 연다
 
     def test_kr_holidays_cached_once_a_day(self):
         page = {"rt_cd": "0", "output": [
