@@ -183,13 +183,18 @@ def merge_bars(bars, day):
     return [merged[t] for t in sorted(merged)]
 
 
+KRX_OPEN, KRX_CLOSE = "090000", "153059"   # 국내 분봉을 남기는 시각 (1분봉 시각, 끝 포함)
+
+
 def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
-    """국내주식 1분봉(FHKST03010230, 한 번에 120개)을 거슬러 받아 nmin 분봉으로 묶는다."""
+    """국내주식 1분봉(FHKST03010230, 한 번에 120개)을 거슬러 받아 nmin 분봉으로 묶는다.
+    KRX 정규장(09:00~15:30 종가 단일가)만 남긴다. 분봉에는 넥스트레이드 애프터(15:30~20:00)도 오지만
+    실시간(H0STCNT0)은 KRX 만이라, 넣으면 켜 둔 서버와 새로 켠 서버의 RSI 가 달라진다."""
     token = get_token(appkey, secret)
     now = datetime.now()
     date, hour = now.strftime("%Y%m%d"), "200000"
     mins = []
-    for _ in range(need * nmin // 120 + 3):
+    for _ in range(need * nmin * 2 // 120 + 3):   # 넥스트레이드 분봉을 버리니 넉넉히 (다 모이면 멈춘다)
         r = requests.get(f"{REST}/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
                          headers={"authorization": f"Bearer {token}", "appkey": appkey,
                                   "appsecret": secret, "tr_id": "FHKST03010230", "custtype": "P"},
@@ -208,7 +213,7 @@ def fetch_kr_bars(appkey, secret, code, nmin=5, need=120):
         page = [b for b in j.get("output2") or [] if b.get("stck_prpr")]
         if not page:
             break
-        mins += page
+        mins += [b for b in page if KRX_OPEN <= b["stck_cntg_hour"] <= KRX_CLOSE]
         last = page[-1]  # 가장 이른 것
         t = datetime.strptime(last["stck_bsop_date"] + last["stck_cntg_hour"], "%Y%m%d%H%M%S")
         t = t.replace(second=0) - timedelta(minutes=1)

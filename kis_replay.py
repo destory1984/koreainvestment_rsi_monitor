@@ -40,10 +40,8 @@ webull_rsi_monitor 의 rsi_replay.py 와 같은 생각이다.
 넣을 종목만 넣는다 (최근 오버나이트 5분 칸 절반 넘게 체결, 또는 kis_settings.json 의 "night").
 
 국내 종목은 1분봉(FHKST03010230)을 거슬러 받아 묶는다. 한 달 넘게 거슬러 받아진다 (3주에 25초쯤).
-분봉에는 KRX 정규장(09:00~15:30)과 넥스트레이드 애프터(15:30~20:00, 09-14 부터 보인다)가 같이 온다.
-웹 서버가 켤 때 받는 것과 같으니 둘 다 넣고 되감되, 세션을 「정규」·「NXT」로 나눈다.
-웹 서버의 국내 실시간은 KRX 만이라 지금은 NXT 시간에 알림이 나지 않는다. 「NXT」 줄은
-넥스트레이드 실시간도 받으면 어땠을지 보는 것이다.
+웹 서버와 같이 KRX 정규장(09:00~15:30)만 쓴다. 분봉에 같이 오는 넥스트레이드 애프터(15:30~20:00)는
+서버 실시간에 없어 뺀다 (예전에 쌓아 둔 캐시에 있어도 뺀다).
 
 ────────────────────────────────────────────────────────────
 쓰는 법
@@ -103,7 +101,7 @@ def ts(t):
 def session(t, kr=False):
     h = t.hour + t.minute / 60
     if kr:
-        return "정규" if h <= 15.5 else "NXT"   # 15:30 봉은 종가 단일가
+        return "정규"
     if h >= 20 or h < 4:
         return "주간"
     if h < 9.5:
@@ -188,7 +186,7 @@ def load_bars(appkey, secret, excd, symb, nmin, days, offline):
             bars.update({b["time_us"]: b for b in got})
             CACHE.mkdir(exist_ok=True)
             path.write_text(json.dumps({"bars": bars, "night": False}), encoding="utf-8")
-        return [bars[t] for t in sorted(bars)], False
+        return [bars[t] for t in sorted(bars) if t[9:] <= k.KRX_CLOSE], False
     if not offline:
         bars.update(fetch_history(appkey, secret, excd, symb, nmin, days))
         night, day = night_on(appkey, secret, excd, symb, nmin)
