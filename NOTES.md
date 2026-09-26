@@ -223,7 +223,7 @@
     프로세스를 PowerShell `Get-NetTCPConnection` 으로 찾아 끄고 포트가 풀릴 때까지 기다린다 (`stop_server`). 창 없는 pythonw 서버도 끈다.
     전하의 `start` 옆에 `stop` 파일(`python kis_web.py --stop`, 저장소 밖 — `start` 처럼 추적 안 함). 실제로 꺼 보고 작업 스케줄러로 다시 켰다.
 
-49. **목소리 크기** (09-26, 전하: 「TTS 음성만 소리를 크게」 → 「30%만 크게」) — 설정 `tts_gain`(기본 1, 지금 **2** — 1.3 → 1.5 → 2 로 전하가 올림), `Voice.gain`.
+49. **목소리 크기** (09-26, 전하: 「TTS 음성만 소리를 크게」 → 「30%만 크게」) — 설정 `tts_gain`(기본 1, 지금 **3** — 1.3 → 1.5 → 2 → 3 으로 전하가 올림), `Voice.gain`.
     `play_wav(path, gain)` 이 wav 를 `al.louder` 로 키운 사본 `tts_cache/_loud.wav` 를 튼다 (넘치면 잘림, mp3·말머리 소리는 그대로).
     녹음 봉우리가 0.13 쯤이라 6배쯤까지 안 깨진다. 「⚙ 설정」 「목소리 크기」(1~6배, `POST /api/tts-gain`, 바로 적용).
 
