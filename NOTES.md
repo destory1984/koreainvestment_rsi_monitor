@@ -223,6 +223,10 @@
     프로세스를 PowerShell `Get-NetTCPConnection` 으로 찾아 끄고 포트가 풀릴 때까지 기다린다 (`stop_server`). 창 없는 pythonw 서버도 끈다.
     전하의 `start` 옆에 `stop` 파일(`python kis_web.py --stop`, 저장소 밖 — `start` 처럼 추적 안 함). 실제로 꺼 보고 작업 스케줄러로 다시 켰다.
 
+49. **목소리 크기** (09-26, 전하: 「TTS 음성만 소리를 크게」 → 「30%만 크게」) — 설정 `tts_gain`(기본 1, 지금 **1.3**), `Voice.gain`.
+    `play_wav(path, gain)` 이 wav 를 `al.louder` 로 키운 사본 `tts_cache/_loud.wav` 를 튼다 (넘치면 잘림, mp3·말머리 소리는 그대로).
+    녹음 봉우리가 0.13 쯤이라 6배쯤까지 안 깨진다. 「⚙ 설정」 「목소리 크기」(1~6배, `POST /api/tts-gain`, 바로 적용).
+
 ## 사전 등록 — 새 데이터로만 판정할 규칙 (09-26 적음)
 
 지난 20일 결과를 보고 떠올린 규칙이라 같은 데이터로 재면 좋게 나올 수밖에 없다. **새 18종목(09-28 첫 수집)과 모든 종목의 09-28 이후 날만**으로 판정한다.
@@ -381,7 +385,7 @@
 
 ## 시험할 때
 
-- **규칙을 고치면 `python -m unittest discover tests` 부터** (73개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
+- **규칙을 고치면 `python -m unittest discover tests` 부터** (74개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
   `Gate` 시험은 시각을 `N`(10억 초)부터 준다 — 첫 쿨다운이 0 초부터 세어진다.
 - 키: `source ~/.bashrc` 하거나, 이제는 `load_keys` 가 `.bashrc` 를 직접 읽는다. 키 값은 화면에 찍지 않는다.
 - Git Bash 에서 한글: `PYTHONIOENCODING=utf-8`.

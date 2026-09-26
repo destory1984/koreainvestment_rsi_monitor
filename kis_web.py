@@ -71,6 +71,8 @@ class Hub:
         self.settings.setdefault("lines", {})        # 종목 -> [강한 아래, 아래, 위, 강한 위]. 없으면 기본 30·35·65·70
         self.settings.setdefault("tts_engine", "local")  # 알림 목소리: "local"(로컬 TTS 녹음) / "edge"(Edge 음성)
         self.voice.prefer = self.settings["tts_engine"]
+        self.settings.setdefault("tts_gain", 1.0)   # 목소리만 몇 배로 키울지 (녹음이 작아서)
+        self.voice.gain = float(self.settings["tts_gain"])
         self.settings.setdefault("kr_market", "krx")  # 국내: "krx"(정규장) / "unified"(넥스트레이드 포함 08:00~20:00)
         k.set_kr_market(self.settings["kr_market"])  # 켤 때 한 번. 바꾸면 다시 켜야 한다
         self.tg = tg.Telegram()
@@ -739,6 +741,7 @@ class Hub:
                 "telegram": {"ready": self.tg.ready, "on": self.settings["telegram"], "error": self.tg.last_error},
                 "kr_market": {"want": self.settings["kr_market"], "now": k.KR_MARKET},
                 "tts_engine": self.settings["tts_engine"],
+                "tts_gain": self.settings["tts_gain"],
                 "events": list(self.events),
                 "rows": [self.row(b) for b in self.books.values()]}
 
@@ -952,6 +955,15 @@ def api_tts_engine(edge: bool = Body(..., embed=True)):
     hub.save_settings()
     hub.prefetch(list(hub.books.values()))
     return {"tts_engine": hub.settings["tts_engine"]}
+
+
+@app.post("/api/tts-gain")
+def api_tts_gain(gain: float = Body(..., embed=True)):
+    """목소리만 몇 배로 키울지 (1~8). 바로 적용된다."""
+    hub.settings["tts_gain"] = min(8.0, max(1.0, float(gain)))
+    hub.voice.gain = hub.settings["tts_gain"]
+    hub.save_settings()
+    return {"tts_gain": hub.settings["tts_gain"]}
 
 
 @app.post("/api/kr-market")

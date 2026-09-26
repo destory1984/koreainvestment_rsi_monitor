@@ -561,6 +561,19 @@ class VoiceTest(unittest.TestCase):
         self.assertTrue(self.v.cached("가"))
         self.assertEqual(self.v.make("가", prefer="local").suffix, ".wav")  # 인사처럼 이 문장만 로컬로
 
+    def test_louder(self):
+        import io
+        import wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(8000)
+            w.writeframes(b"".join(v.to_bytes(2, "little", signed=True) for v in (1000, -1000, 30000)))
+        with wave.open(io.BytesIO(al.louder(buf.getvalue(), 1.3))) as w:
+            out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(3)]
+        self.assertEqual(out, [1300, -1300, 32767])                           # 넘치는 곳은 잘린다
+
     def test_edge_fails_falls_back_to_local(self):
         self.v.prefer = "edge"
         self.v._edge_save = mock.Mock(side_effect=RuntimeError("인터넷 없음"))

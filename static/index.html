@@ -192,6 +192,9 @@
   <div class="mrow"><span class="mlabel"><span>알림 목소리 Edge <button type="button" class="info" aria-expanded="false" title="켜면 알림·시그널을 Edge 음성(인터넷, SunHi)으로 읽는다. 없는 문장은 켤 때 뒤에서 만든다. 끄면 로컬 TTS 로 녹음해 둔 목소리. 시작 인사는 그대로. 바로 적용된다." aria-label="자세히">ⓘ</button></span><small id="ttsnote">로컬 TTS 녹음</small></span>
     <button class="switch" id="ttsedge" role="switch" aria-checked="false" aria-label="알림 목소리를 Edge 로"></button></div>
   <p class="more" hidden>켜면 알림·시그널을 Edge 음성(인터넷, SunHi)으로 읽는다. 없는 문장은 켤 때 뒤에서 만든다. 끄면 로컬 TTS 로 녹음해 둔 목소리. 시작 인사는 그대로. 바로 적용된다.</p>
+  <div class="mrow"><span class="mlabel"><span>목소리 크기 <button type="button" class="info" aria-expanded="false" title="알림·인사 목소리만 키운다 (땡·경보 소리와 다른 프로그램 소리는 그대로). 녹음이 작게 되어 있어 6배쯤까지는 깨지지 않는다. 바꾸면 바로 적용되니 TTS 테스트로 들어 본다." aria-label="자세히">ⓘ</button></span></span>
+    <select id="ttsgain" aria-label="목소리 크기"><option value="1">1배</option><option value="1.3">1.3배</option><option value="1.5">1.5배</option><option value="2">2배</option><option value="3">3배</option><option value="4">4배</option><option value="5">5배</option><option value="6">6배</option></select></div>
+  <p class="more" hidden>알림·인사 목소리만 키운다 (땡·경보 소리와 다른 프로그램 소리는 그대로). 녹음이 작게 되어 있어 6배쯤까지는 깨지지 않는다. 바꾸면 바로 적용되니 TTS 테스트로 들어 본다.</p>
   <div class="mrow"><span>목소리</span><button class="hbtn" id="soundtest" title="고른 종목의 65 초과 문장을 한 번 읽는다">TTS 테스트</button></div>
 </div>
 <div id="markets"></div>
@@ -885,6 +888,17 @@ $("#krmarket").onclick = async () => {
                                               body: JSON.stringify({ unified: cfg.kr_market.want !== "unified" }) });
   if (res.ok) setKrMarket(await res.json());
 };
+function setTtsGain(g) {
+  cfg.tts_gain = g;
+  const sel = $("#ttsgain");
+  if (![...sel.options].some(o => +o.value === +g)) sel.add(new Option(`${g}배`, g));
+  sel.value = String(+g);
+}
+$("#ttsgain").onchange = async e => {
+  const res = await fetch("/api/tts-gain", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ gain: +e.target.value }) });
+  if (res.ok) setTtsGain((await res.json()).tts_gain);
+};
 // 알림 목소리: "local"(로컬 TTS 녹음) / "edge"
 function setTtsEngine(e) {
   cfg.tts_engine = e;
@@ -1022,6 +1036,7 @@ async function loadState() {
   setTelegram(st.telegram || { ready: false, on: false });
   setKrMarket(st.kr_market || { want: "krx", now: "krx" });
   setTtsEngine(st.tts_engine || "local");
+  setTtsGain(st.tts_gain || 1);
   renderMarkets(st.markets);
   events = st.events || [];
   renderEvents();

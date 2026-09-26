@@ -245,8 +245,31 @@ def _mci(cmd):
     return buf.value
 
 
-def play_wav(path):
-    """wav·mp3 를 끝까지 틀고 돌아온다 (알림은 한 줄로 세워 하나씩 트니 기다려도 된다)."""
+def louder(data, gain):
+    """16비트 wav 의 소리를 gain 배로. 넘치는 곳은 잘린다. 못 하겠으면 받은 그대로."""
+    try:
+        import numpy as np
+        with wave.open(io.BytesIO(data)) as w:
+            if w.getsampwidth() != 2:
+                return data
+            params, frames = w.getparams(), w.readframes(w.getnframes())
+        x = np.frombuffer(frames, dtype="<i2").astype(np.float32) * gain
+        out = io.BytesIO()
+        with wave.open(out, "wb") as w2:
+            w2.setparams(params)
+            w2.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
+        return out.getvalue()
+    except Exception:
+        return data
+
+
+def play_wav(path, gain=1.0):
+    """wav·mp3 를 끝까지 틀고 돌아온다 (알림은 한 줄로 세워 하나씩 트니 기다려도 된다).
+    gain 이 1 이 아니면 wav 를 그만큼 키운 사본(같은 폴더 _loud.wav)을 튼다. mp3(Edge) 는 그대로."""
+    if gain != 1.0 and str(path).lower().endswith(".wav"):
+        loud = Path(path).with_name("_loud.wav")
+        loud.write_bytes(louder(Path(path).read_bytes(), gain))
+        path = loud
     alias = "kistts"
     try:
         _mci(f"close {alias}")
@@ -287,6 +310,7 @@ class Voice:
         self.q = queue.Queue()
         self.last_path = ""       # 마지막으로 읽은 경로 ("local" / "sapi" / "powershell" / "")
         self.last_error = ""
+        self.gain = 1.0           # 목소리만 키우는 배수 (말머리 소리는 그대로)
         self.prefer = "local"     # 알림을 읽을 목소리: "local"(로컬 TTS 녹음 먼저) / "edge"(Edge 먼저, 없으면 만든다)
         threading.Thread(target=self._worker, daemon=True).start()
 
@@ -437,7 +461,7 @@ class Voice:
         self.last_error = ""
         try:
             p = self.make(text, prefer)
-            play_wav(p)
+            play_wav(p, self.gain)
             return "edge" if p.suffix == ".mp3" else "local"
         except Exception as e:
             self.last_error = str(e)
