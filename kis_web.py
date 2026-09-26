@@ -993,6 +993,28 @@ async def ws_endpoint(ws: WebSocket):
         hub.clients.discard(ws)
 
 
+def stop_server(port):
+    """port 를 듣고 있는 프로세스를 끈다. 창 없이(pythonw) 뜬 서버는 닫을 창이 없어서 이것으로 끈다."""
+    import subprocess
+    import time
+    ps = lambda cmd: subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                                    capture_output=True, text=True, creationflags=0x08000000)
+    out = ps(f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue "
+             "| Select-Object -ExpandProperty OwningProcess -Unique").stdout
+    pids = sorted({int(x) for x in out.split() if x.isdigit() and int(x) > 0})
+    if not pids:
+        print(f"떠 있는 서버가 없다 (포트 {port})")
+        return
+    for pid in pids:
+        ps(f"Stop-Process -Id {pid} -Force")
+    for _ in range(20):   # 포트가 풀릴 때까지 (다시 켤 때 「이미 떠 있다」가 나오지 않게)
+        if not ps(f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue").stdout.strip():
+            print(f"서버를 껐다 (프로세스 {', '.join(map(str, pids))})")
+            return
+        time.sleep(0.5)
+    print(f"끄지 못했다 — 작업 관리자에서 python / pythonw 를 끈다 (프로세스 {', '.join(map(str, pids))})")
+
+
 def main():
     global hub
     p = argparse.ArgumentParser(description="RSI·MACD 웹 대시보드")
@@ -1005,7 +1027,10 @@ def main():
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--no-browser", action="store_true", help="브라우저를 열지 않는다")
     p.add_argument("--log", help="찍는 것을 이 파일에 덧붙인다 (창 없이 띄울 때)")
+    p.add_argument("--stop", action="store_true", help="떠 있는 서버를 끈다 (터미널로 띄운 것이든 자동 시작으로 뜬 창 없는 것이든)")
     args = p.parse_args()
+    if args.stop:
+        return stop_server(args.port)
     import socket
     import threading
     import uvicorn

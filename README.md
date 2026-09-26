@@ -57,6 +57,9 @@ python kis_web.py TSLA SOXL 005930
 브라우저가 저절로 http://localhost:8000 을 연다. 다음부터는 종목 없이 `python kis_web.py` 만 하면
 저장된 목록으로 뜬다.
 
+끌 때는 띄운 창에서 Ctrl+C, 또는 어느 창에서든 `python kis_web.py --stop` (포트 8000 을 듣는 서버를 찾아 끈다.
+아래 자동 시작으로 창 없이 뜬 서버도 이것으로 끈다).
+
 ### 자동으로 띄우기 (고르기)
 
 윈도우에 로그인하면 창 없이 서버를 띄우게 작업 스케줄러에 걸어 둘 수 있다. PowerShell 에서:
@@ -75,7 +78,7 @@ Register-ScheduledTask -TaskName "KIS RSI 모니터" -Trigger $t -Action $a -Set
   (작업 스케줄러로 뜨면 셸을 거치지 않아서다).
 - **이미 떠 있으면 새로 띄우지 않고 끝난다.** 앱키 하나에 실시간 연결은 하나라 둘이 뜨면 서로 끊기 때문이다.
   손으로 `python kis_web.py` 를 해도 마찬가지로, 떠 있는 서버 쪽으로 브라우저만 연다.
-- 끄기 `Stop-ScheduledTask -TaskName "KIS RSI 모니터"`, 지금 띄우기 `Start-ScheduledTask -TaskName "KIS RSI 모니터"`,
+- 끄기 `python kis_web.py --stop` 또는 `Stop-ScheduledTask -TaskName "KIS RSI 모니터"`, 지금 띄우기 `Start-ScheduledTask -TaskName "KIS RSI 모니터"`,
   아예 지우기 `Unregister-ScheduledTask -TaskName "KIS RSI 모니터"`.
 
 ### 5. 목소리 (따로 할 것 없음)

@@ -208,7 +208,7 @@
 
 45. **자동 시작 확인** (09-26 01:18, 전하 허락) — 전하가 터미널로 띄운 서버(`python kis_web.py`)를 내리고 `Start-ScheduledTask -TaskName "KIS RSI 모니터"`
     → pythonw 서버가 12초 만에 `/api/state` 200, 실시간 구독 모두 성공. **지금 서버는 이 pythonw 로 돈다** (창 없음, 기록은 `kis_web.log`).
-    끄려면 작업 관리자에서 pythonw, 또는 `Get-CimInstance Win32_Process | ? CommandLine -like '*kis_web.py*'` 로 찾아 `Stop-Process`.
+    끄려면 `python kis_web.py --stop` (48번).
     같은 때 다시 켠 서버에서 33·37·39번(조기 폐장 `us_early`, `/report` 200, `kr_market`)이 들어간 것을 API 로 봤다.
 46. **알림 목소리 Edge 스위치** (09-26, 전하: 「장중에 울리는 TTS 는 edge TTS 로 잠시 바꿔줘」) — 설정 `tts_engine`: `"local"`(기본) / `"edge"`.
     `Voice.prefer` 가 앞세울 목소리. Edge 면 Edge 파일이 없을 때 먼저 만들고, 안 되면(인터넷 없음) 로컬 녹음을 쓴다 (`make(text, prefer)`, `_save`).
@@ -218,6 +218,10 @@
 47. **로컬 TTS 감정 지시 모두 뺌** (09-26, 전하: 「qwen 목소리에 감정을 넣으니 별로」) — `TTS_LOCAL_EMOTION = ()`. 남아 있던 것은 「시작」이 든 문장의
     「기쁘고 활기찬 목소리로」 하나였고, 알림·시그널 문장은 원래 지시 없이 녹음돼 있었다 (Webull 판도 알림은 감정 없음). 전하가 Edge 로 바꾼 까닭이
     이것이었다. 뒤이어 알림 목소리를 바꿨다 (`NOTES.local.md`) — 설정 `tts_engine` 은 다시 `local`. 지시가 캐시 이름에 들어가 시작 인사 녹음 두 파일의 이름이 바뀌어서 새 이름으로 복사했다 (옛 파일도 남김, `NOTES.local.md`). **「잠시」라 하셨으니 되돌릴지 나중에 여쭐 것** (스위치를 끄면 된다).
+
+48. **서버 끄기 `--stop`** (09-26, 전하: 「start 는 있는데 stop 은 없네」) — `python kis_web.py --stop` 이 포트(기본 8000)를 듣는
+    프로세스를 PowerShell `Get-NetTCPConnection` 으로 찾아 끄고 포트가 풀릴 때까지 기다린다 (`stop_server`). 창 없는 pythonw 서버도 끈다.
+    전하의 `start` 옆에 `stop` 파일(`python kis_web.py --stop`, 저장소 밖 — `start` 처럼 추적 안 함). 실제로 꺼 보고 작업 스케줄러로 다시 켰다.
 
 ## 사전 등록 — 새 데이터로만 판정할 규칙 (09-26 적음)
 
