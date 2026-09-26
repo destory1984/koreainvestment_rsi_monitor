@@ -572,7 +572,7 @@ class VoiceTest(unittest.TestCase):
             w.writeframes(b"".join(v.to_bytes(2, "little", signed=True) for v in (1000, -1000, 30000)))
         with wave.open(io.BytesIO(al.louder(buf.getvalue(), 1.3))) as w:
             out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(3)]
-        self.assertEqual(out, [1300, -1300, 32767])                           # 넘치는 곳은 잘린다
+        self.assertEqual(out, [1092, -1092, 32767])                           # 30000 이 끝에 닿는 1.09배에서 멈춘다
 
     def test_edge_fails_falls_back_to_local(self):
         self.v.prefer = "edge"

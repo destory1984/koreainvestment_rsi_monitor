@@ -246,18 +246,21 @@ def _mci(cmd):
 
 
 def louder(data, gain):
-    """16비트 wav 의 소리를 gain 배로. 넘치는 곳은 잘린다. 못 하겠으면 받은 그대로."""
+    """16비트 wav 의 소리를 gain 배로. 가장 큰 곳이 끝에 닿으면 거기서 멈춘다 (잘려 찌그러지지 않게,
+    큰 문장은 gain 보다 덜 커진다). 못 하겠으면 받은 그대로."""
     try:
         import numpy as np
         with wave.open(io.BytesIO(data)) as w:
             if w.getsampwidth() != 2:
                 return data
             params, frames = w.getparams(), w.readframes(w.getnframes())
-        x = np.frombuffer(frames, dtype="<i2").astype(np.float32) * gain
+        x = np.frombuffer(frames, dtype="<i2").astype(np.float32)
+        peak = float(np.abs(x).max()) if x.size else 0.0
+        x *= min(gain, 32767 / peak) if peak else gain
         out = io.BytesIO()
         with wave.open(out, "wb") as w2:
             w2.setparams(params)
-            w2.writeframes(np.clip(x, -32768, 32767).astype("<i2").tobytes())
+            w2.writeframes(np.clip(np.round(x), -32768, 32767).astype("<i2").tobytes())
         return out.getvalue()
     except Exception:
         return data
