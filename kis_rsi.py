@@ -512,12 +512,16 @@ async def live(approval_key, keys, on_tick=print_tick, on_open=None):
             await subscribe(ws, approval_key, k)
         if on_open:
             on_open(ws)
+        seen = set()
         async for msg in ws:
             if msg[0] in "01":  # 데이터: 암호화|TR|건수|필드^필드^...
                 _, tr_id, count, data = msg.split("|", 3)
                 fields = KR_FIELDS if tr_id in KR_TRS else LIVE_FIELDS
                 vals, count, n = data.split("^"), int(count), len(fields)
                 skip = 1 if len(vals) == count * (n + 1) else 0  # 앞에 구독 키가 한 칸 더 붙어 오면
+                if tr_id not in seen:   # TR 마다 처음 한 번: 칸 수가 맞는지 기록에 남긴다
+                    seen.add(tr_id)
+                    print(f"첫 체결 {tr_id}: {count}건 {len(vals)}칸 (한 건 {n}칸) 앞 칸 {vals[:3]}", flush=True)
                 for i in range(count):
                     rec = vals[i * (n + skip) + skip:(i + 1) * (n + skip)]
                     on_tick(normalize(tr_id, dict(zip(fields, rec))))
