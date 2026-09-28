@@ -266,6 +266,18 @@ class MutedTest(unittest.TestCase):
         h.settings["sound_sessions"]["kr"] = False
         self.assertEqual(self.muted(h, excd="KRX", symb="005930"), "국내 종목 소리 끔")
 
+    def test_strong_only(self):
+        h = self.hub(strong_only={"day": True})
+        FakeNow.fixed = datetime(2026, 9, 25, 12, 0)
+        with mock.patch.object(w, "datetime", FakeNow), mock.patch.object(k, "us_session", lambda: "day"):
+            b = types.SimpleNamespace(excd="NAS", symb="MU")
+            self.assertEqual(h.muted(b, "warn"), "미국 주간거래 강한 선만")
+            self.assertEqual(h.muted(b, "strong"), "")
+            self.assertEqual(h.muted(b), "")   # 시그널은 그대로
+        self.assertEqual(self.muted(h, session="regular"), "")
+        with mock.patch.object(k, "us_session", lambda: "regular"):
+            self.assertEqual(h.muted(types.SimpleNamespace(excd="NAS", symb="MU"), "warn"), "")
+
     def test_market_closed(self):
         h = self.hub()
         h.kr_closed = ["2026-09-25"]

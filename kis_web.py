@@ -66,6 +66,10 @@ class Hub:
         for key in SOUND_SESSIONS:
             self.settings["sound_sessions"].setdefault(key, True)
         self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
+        # 세션마다 강한 선(30/70) 알림만 울리기. 미국 주간거래는 35/65 가 너무 잦아 기본으로 켠다
+        self.settings.setdefault("strong_only", {})
+        for key in SOUND_SESSIONS:
+            self.settings["strong_only"].setdefault(key, key == "day")
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
         self.settings.setdefault("lines", {})        # 종목 -> [강한 아래, 아래, 위, 강한 위]. 없으면 기본 30·35·65·70
@@ -543,7 +547,8 @@ class Hub:
                           + (" (시작 때부터)" if a["start"] else ""),
                   "suppressed": a.get("suppressed", ""),
                   # 켤 때 이미 선 너머였던 것은 기록만 한다. 켤 때마다 알림이 몰려 울리지 않게
-                  "muted": "" if a.get("suppressed") else "켤 때 이미 넘어 있음" if a["start"] else self.muted(b)}
+                  "muted": "" if a.get("suppressed") else "켤 때 이미 넘어 있음" if a["start"]
+                           else self.muted(b, a["strength"])}
             self.events.appendleft(ev)
             with ALERT_LOG.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
@@ -641,8 +646,9 @@ class Hub:
         return {"side": x.side, "word": x.word, "grade": x.grade, "trend": x.trend,
                 "bar": epoch(x.bar)}
 
-    def muted(self, book):
-        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열."""
+    def muted(self, book, strength=None):
+        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열.
+        strength 는 선 알림의 세기("warn"/"strong"). 시그널은 None 이라 강한 선만 규칙을 안 탄다."""
         if book.symb in self.settings["mute"]:
             return "종목 소리 끔"
         q = self.settings["quiet"]
@@ -653,6 +659,8 @@ class Hub:
         key = "kr" if book.excd == "KRX" else k.us_session()
         if key and not self.settings["sound_sessions"].get(key, True):
             return f"{SOUND_SESSIONS[key]} 소리 끔"
+        if key and strength == "warn" and self.settings.get("strong_only", {}).get(key):
+            return f"{SOUND_SESSIONS[key]} 강한 선만"
         return ""
 
     def lines(self, symb):
@@ -737,6 +745,7 @@ class Hub:
                 "max": MAX_TICKERS, "sound": self.settings["sound"], "markets": self.markets,
                 "signal_sound": self.settings["signal_sound"],
                 "sound_sessions": self.settings["sound_sessions"], "quiet": self.settings["quiet"],
+                "strong_only": self.settings["strong_only"],
                 "session_names": SOUND_SESSIONS, "holidays": self.holidays(),
                 "telegram": {"ready": self.tg.ready, "on": self.settings["telegram"], "error": self.tg.last_error},
                 "kr_market": {"want": self.settings["kr_market"], "now": k.KR_MARKET},
@@ -913,8 +922,12 @@ async def api_lines(symb: str = Body(...), lines: list = Body(None)):
 
 
 @app.post("/api/sound-when")
-def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None)):
-    """소리 나는 때. sessions 는 {"day": true, ...}, quiet 는 {"on", "from": "HH:MM", "to": "HH:MM"}."""
+def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None), strong_only: dict = Body(None)):
+    """소리 나는 때. sessions 는 {"day": true, ...}, quiet 는 {"on", "from": "HH:MM", "to": "HH:MM"},
+    strong_only 는 {"day": true, ...} (그 세션엔 강한 선 알림만 울림)."""
+    for key, on in (strong_only or {}).items():
+        if key in SOUND_SESSIONS:
+            hub.settings["strong_only"][key] = bool(on)
     if sessions:
         for key, on in sessions.items():
             if key in SOUND_SESSIONS:
@@ -930,7 +943,8 @@ def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None)):
         if "on" in quiet:
             q["on"] = bool(quiet["on"])
     hub.save_settings()
-    return {"sound_sessions": hub.settings["sound_sessions"], "quiet": hub.settings["quiet"]}
+    return {"sound_sessions": hub.settings["sound_sessions"], "quiet": hub.settings["quiet"],
+            "strong_only": hub.settings["strong_only"]}
 
 
 @app.post("/api/signal-sound")
