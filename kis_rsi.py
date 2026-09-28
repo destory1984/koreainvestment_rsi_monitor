@@ -504,6 +504,14 @@ async def subscribe(ws, approval_key, key, on=True):
         "body": {"input": {"tr_id": tr_id, "tr_key": tr_key}}}))
 
 
+def split_records(data, count, n):
+    """실시간 데이터 '필드^필드^...' 를 건마다 앞 n 칸씩 나눈다. 한 건의 칸 수는 전체 ÷ 건수로 센다 —
+    통합 체결(H0UNCNT0)은 예제·문서의 46칸보다 한 칸 많은 47칸으로 온다 (09-28 확인, 늘어난 칸은 뒤에 붙는다)."""
+    vals = data.split("^")
+    per = len(vals) // count if count and len(vals) % count == 0 else n
+    return [vals[i * per:i * per + n] for i in range(count)]
+
+
 async def live(approval_key, keys, on_tick=print_tick, on_open=None):
     """on_open(ws) 을 주면 연결 직후 불러 준다. 연결 중에 구독을 넣고 빼려면 그 ws 를 쓴다."""
     import websockets
@@ -517,13 +525,12 @@ async def live(approval_key, keys, on_tick=print_tick, on_open=None):
             if msg[0] in "01":  # 데이터: 암호화|TR|건수|필드^필드^...
                 _, tr_id, count, data = msg.split("|", 3)
                 fields = KR_FIELDS if tr_id in KR_TRS else LIVE_FIELDS
-                vals, count, n = data.split("^"), int(count), len(fields)
-                skip = 1 if len(vals) == count * (n + 1) else 0  # 앞에 구독 키가 한 칸 더 붙어 오면
                 if tr_id not in seen:   # TR 마다 처음 한 번: 칸 수가 맞는지 기록에 남긴다
                     seen.add(tr_id)
-                    print(f"첫 체결 {tr_id}: {count}건 {len(vals)}칸 (한 건 {n}칸) 앞 칸 {vals[:3]}", flush=True)
-                for i in range(count):
-                    rec = vals[i * (n + skip) + skip:(i + 1) * (n + skip)]
+                    n = len(data.split("^"))
+                    print(f"첫 체결 {tr_id}: {count}건 {n}칸 (한 건 {len(fields)}칸) 앞 칸 {data.split('^')[:3]}",
+                          flush=True)
+                for rec in split_records(data, int(count), len(fields)):
                     on_tick(normalize(tr_id, dict(zip(fields, rec))))
                 continue
             j = json.loads(msg)

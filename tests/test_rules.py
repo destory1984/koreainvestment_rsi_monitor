@@ -912,5 +912,21 @@ class MinuteTest(unittest.TestCase):
             self.assertEqual(rp.collect_tickers(), ["NAS:TSLA", "KRX:005930"])
 
 
+
+class SplitRecordsTest(unittest.TestCase):
+    def test_unified_has_one_more_field(self):
+        # 통합 체결은 한 건 47칸 (KR_FIELDS 46칸 + 뒤에 하나). 종목코드가 맨 앞에 그대로 와야 한다
+        n = len(k.KR_FIELDS)
+        rec = ["005930", "093109", "280500"] + ["0"] * (n - 3) + ["X"]
+        recs = k.split_records("^".join(rec * 2), 2, n)
+        self.assertEqual([r[:3] for r in recs], [["005930", "093109", "280500"]] * 2)
+        self.assertEqual(len(recs[1]), n)
+
+    def test_exact_fields(self):
+        n = len(k.LIVE_FIELDS)
+        rec = ["RBAQTSLA", "TSLA"] + ["1"] * (n - 2)
+        self.assertEqual(k.split_records("^".join(rec * 3), 3, n), [rec] * 3)
+
+
 if __name__ == "__main__":
     unittest.main()
