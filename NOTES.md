@@ -20,6 +20,7 @@
 - 윈도우 작업 스케줄러 두 개 (사용자 허락받고 등록):
   - `KIS RSI 모니터` — 로그인 30초 뒤 `pythonw kis_web.py --no-browser --log kis_web.log`. 이미 떠 있으면 스스로 끝난다.
   - `KIS 주간거래 분봉 수집` — 평일 09:00\~18:30, 30분마다 `collect_day.vbs` → `kis_replay.py --collect`. 기록은 `replay_cache/collect.log`.
+    시간 제한 60분 (09-28 에 10분 → 60분, 전하 허락). 새 18종목 첫 수집이 21분 걸려 10분에 wscript 가 끊겼다(결과 267014, python 은 끝까지 돌아 봉은 다 받음).
     09-25 부터 **모든 종목의 1분봉**도 이어 쌓는다 — 모니터링 13종목 + `kis_collect.json` 18종목 = 31종목 (36번).
     새 18종목은 09-28(월) 09:00 첫 수집에서 종목당 50초쯤 걸려 25거래일 치를 받는다.
 - Claude 예약 작업 둘 (`C:\Users\eofeo\.claude\scheduled-tasks\<id>\SKILL.md`, 둘 다 신하 말투로 알리게 해 둠):
