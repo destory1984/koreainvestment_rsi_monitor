@@ -154,6 +154,9 @@
   .charthead h2 { margin: 0; font-size: calc(var(--fs) * 1.1); }
   .pane { position: relative; }
   .pane span { position: absolute; left: 8px; top: 4px; z-index: 2; font-size: calc(var(--fs) * 0.9); color: var(--muted); }
+  .ohlc { position: absolute; left: 8px; top: 4px; z-index: 3; pointer-events: none; font-size: calc(var(--fs) * 0.9);
+          color: var(--muted); background: var(--panel); padding: 1px 4px; border-radius: 4px; white-space: nowrap; }
+  .ohlc b { color: var(--text); font-weight: 600; }
   #c-price { height: 180px; } #c-rsi { height: 80px; } #c-macd { height: 80px; }
   @media (max-width: 600px) {
     #c-price { height: 150px; } #c-rsi { height: 70px; } #c-macd { height: 70px; }
@@ -225,7 +228,7 @@
   </div>
   <div class="card">
     <div class="charthead"><h2 id="ctitle"></h2><span class="sub">시각은 그 시장의 현지 시각</span></div>
-    <div class="pane" id="c-price"></div>
+    <div class="pane" id="c-price"><div class="ohlc" id="ohlc" hidden></div></div>
     <div class="pane" id="c-rsi"><span>RSI</span></div>
     <div class="pane" id="c-macd"><span>MACD · 시그널 · 히스토그램</span></div>
   </div>
@@ -569,11 +572,35 @@ function makeCharts() {
   price.timeScale().applyOptions({ visible: false });
   rsi.timeScale().applyOptions({ visible: false });
   const all = [price, rsi, macd];
+  // 봉에 마우스를 올리면 그 봉의 시각·시고저종·앞 봉 대비·RSI·MACD 를 가격 차트 왼쪽 위에
+  all.forEach(c => c.subscribeCrosshairMove(p => showOhlc(p, s)));
   all.forEach(a => a.timeScale().subscribeVisibleLogicalRangeChange(r => {
     if (!r) return;
     all.forEach(b => b !== a && b.timeScale().setVisibleLogicalRange(r));
   }));
   return { all, s, rsiLines };
+}
+
+function showOhlc(p, s) {
+  const box = $("#ohlc");
+  const i = p && p.logical != null && p.point ? Math.round(p.logical) : null;
+  const b = i == null ? null : s.candle.dataByIndex(i);
+  if (!b || b.open == null) { box.hidden = true; return; }
+  const krx = rows[selected] && rows[selected].excd === "KRX";
+  const f = v => fmtPrice(v, krx);
+  const prev = s.candle.dataByIndex(i - 1);
+  const chg = prev && prev.close ? (b.close / prev.close - 1) * 100 : null;
+  const d = new Date(b.time * 1000), z = n => String(n).padStart(2, "0");   // 차트 시각은 현지 시각을 UTC 인 척
+  const at = `${z(d.getUTCMonth() + 1)}-${z(d.getUTCDate())} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}`;
+  const r = s.rsi.dataByIndex(i), m = s.macd.dataByIndex(i), g = s.signal.dataByIndex(i);
+  const col = b.close >= b.open ? "var(--up)" : "var(--down)";
+  box.innerHTML = `${at} &nbsp;시 <b>${f(b.open)}</b> 고 <b>${f(b.high)}</b> 저 <b>${f(b.low)}</b> ` +
+    `종 <b style="color:${col}">${f(b.close)}</b>` +
+    (chg == null ? "" : ` <b style="color:${chg >= 0 ? "var(--up)" : "var(--down)"}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</b>`) +
+    (r && r.value != null ? ` &nbsp;RSI <b>${Math.floor(r.value)}</b>` : "") +
+    (m && m.value != null ? ` &nbsp;MACD <b>${m.value.toFixed(krx ? 0 : 3)}</b>` +
+      (g && g.value != null ? `/<b>${g.value.toFixed(krx ? 0 : 3)}</b>` : "") : "");
+  box.hidden = false;
 }
 
 const histPt = p => p.value == null ? p : ({ time: p.time, value: p.value, color: p.value >= 0 ? css("--pos") : css("--neg") });
