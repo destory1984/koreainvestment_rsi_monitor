@@ -1,19 +1,23 @@
 # 개발 노트
 
-> 2026-09-26 기준 (버전 0.2). 00:50 에 컨텍스트를 비운 뒤 43\~46번(다이버전스 더 시험, 사전 등록 판정 준비, 자동 시작 확인, 알림 목소리 Edge)을 했다. 새 세션이 이 파일만 읽고 이어서 작업할 수 있게 쓴다.
-> 09-25 밤\~09-26 새벽에 한 것은 「지금까지 한 것」 33\~42번이다 (대부분 백테스트). 컨텍스트가 길어져 사용자가 clear 한다.
+> 2026-09-30 기준 (버전 0.2). 09-28·09-29 에 49번 뒤로 50→54번(세션별 알림 표, 죽은 실시간 연결, 통합 체결 47칸, 차트 마우스 오버)을 했다.
+> 새 세션이 이 파일만 읽고 이어서 작업할 수 있게 쓴다. 컨텍스트가 길어져 사용자가 clear 한다.
+> 전역 규칙(사용자 CLAUDE.md, 09-30): 새로 쓰는 문서에는 물결표를 쓰지 않고 범위·변화는 → 로 적는다 (예: 09:00 → 15:30). 이 파일의 옛 `\~` 는 그대로 둔다.
 > 할 일은 [TODO.md](TODO.md), 쓰는 법은 [README.md](README.md). **사용자와의 대화는 조선시대 왕과 신하 말투로 한다** (사용자는 「전하」, Claude 는 신하 — 「\~하옵니다」, 「\~하였사옵니다」. 09-25 사용자가 정함).
 > 문서(README·NOTES·TODO·코드 주석)와 커밋 메시지는 전처럼 쉬운 평서체로 쓴다.
 
 ## 지금 상태
 
 - 저장소: https://github.com/destory1984/koreainvestment_rsi_monitor (공개). 로컬 `C:\_c\koreainvest`, 브랜치 `main`.
-  09-26 00:40 `1f67d67` 까지 push 됨 (이 NOTES 커밋은 아직). 09-25 밤 커밋들은 시작 인사 목소리 노트를 빼느라 다시 써서 강제 push 했다
+  09-29 저녁 `5a92511` 까지 push 됨 (이 NOTES 커밋은 아직). 09-25 밤 커밋들은 시작 인사 목소리 노트를 빼느라 다시 써서 강제 push 했다
   (사용자가 스크립트를 직접 돌림, 옛 것은 로컬 가지 `backup-before-scrub`). **목소리 이야기는 저장소 밖 `NOTES.local.md` 에만 적는다 — 저장소는 공개.**
   push 전에는 `git grep` 으로 목소리 이야기·키가 섞이지 않았는지 본다.
 - **커밋은 기능 하나 끝날 때마다 묻지 말고 한다. push 는 사용자가 시킬 때만.** 커밋 끝에 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- 웹 서버는 사용자가 띄워 둔다 (09-25 22:10 쯤 다시 켬 — 32번까지 들어가 있다. **33번 조기 폐장, 37번 `/report`, 39번 넥스트레이드 스위치는
-  서버를 다시 켜야 적용** — 사용자에게 다시 켜기를 권할 것). **Claude 가 새 서버를 띄우지 않는다** — 앱키 하나에 실시간 연결 하나라 사용자 서버가 끊긴다.
+- 웹 서버는 작업 스케줄러(pythonw)로 돈다. **09-29 18:24 에 다시 켰다 — 54번(세션별 알림 표)까지 모두 들어가 있다.** 끄고 켜는 것은
+  사용자에게 묻고 한다: `python kis_web.py --stop` → `Start-ScheduledTask -TaskName "KIS RSI 모니터"`. **Claude 가 새 서버를 따로 띄우지 않는다** —
+  앱키 하나에 실시간 연결 하나라 사용자 서버가 끊긴다.
+  지금 설정(09-29 저녁, 사용자가 고른 것): 국내 `kr_market` = `krx`(넥스트레이드 끔), 텔레그램 끔, 시그널 소리 끔, 소리 켠 세션은 미국 프리·정규뿐,
+  세션별 알림 표는 기본값(모두 35/65, 나이트 알림·텔레그램 30/70). 알림 문장 112개 모두 녹음돼 있다 (`NOTES.local.md`).
   사용자가 「서버 다시 켰어, 확인해줘」 하면: `/api/state` 가 200 이 될 때까지 기다리고(켜는 데 20\~30초), 바뀐 것을 API·화면(localhost 탭 새로고침)으로 본다.
   코드를 고치면 "서버를 다시 켜야 적용"이라고 알린다. `static/index.html` 만 고친 것은 새로고침으로 된다.
 - 로컬 TTS 서버는 **늘 띄우지 않는다.** 녹음할 때만 `python tts_make.py` 가 띄웠다 내린다 (Claude 가 돌린다).
@@ -364,18 +368,31 @@
 
 ## 아직 확인 못 한 것
 
-- **국내 실시간 체결** — 연휴라 못 봤다. **2026-09-28(월) 장중**에 삼성전자·SK하이닉스 체결, H0STCNT0 필드가 맞는지.
-  국내 분봉은 KRX 정규장만 쓰니(21번) 15:30 뒤 값은 멈춘다. 켜 둔 서버와 새로 켠 서버의 국내 RSI 가 같은지도 본다.
-- **국내 넥스트레이드 통합 실시간(H0UNCNT0)** (39번) — 09-28 장중 체결이 오는 것은 봤다 (51번). 08:00 프리·15:30\~20:00 애프터에도 오는지.
-- **다시 켠 서버의 새 것들** — 조기 폐장 표시(33번, 다음은 11-27), `/report`(37번), 설정의 「국내 넥스트레이드」 스위치 누르기(39번).
-- **새 18종목 첫 1분봉 수집** — 09-28 09:00 `collect.log` 에 `+` 가 찍히는지, `kis_report.py` 가 31종목을 다 채점하는지.
-- **알림 시간대·켤 때 소리 막기·여러 시간봉·켤 때 등락** — 시험은 가짜 데이터·REST 로만. 사용자 서버에 들어가 있으니 화면·기록으로 본다.
-- **종목만 소리 끄기(19번)로 끈 종목에 실제 알림이 났을 때** 소리 없이 「🔇 종목 소리 끔」으로 남는지. **종목별 선(30번)을 실제로 바꾼 경우** (가짜 데이터로만 시험).
-- **텔레그램으로 실제 알림이 가는지** (시험 메시지만 보냄). **새 시그널 규칙(29번)이 실시간 봉 경계에서 제때 울리는지.**
-- **봉 경계에서 실제 시그널 알림**, **`kis_rsi.py setup`**(입력을 받아서 못 돌림).
-- **주간거래 분봉은 「가장 최근 세션」을 준다** — 09-25 뉴욕 08:42(세션 끝나고 4시간 40분)에도 어젯밤 20:00\~03:55 를 통째로 줬다
-  (SOXL 96/96, TSLA 94). **다음 세션이 열리기 직전까지 받아지는지** (예: 목요일 밤 세션을 월요일 08:59 에) → 09-28 08:30 예약 작업이 본다.
+- **세션이 바뀔 때 선이 바뀌는지** (54번) — 한국 09:00(미국 주간거래 시작)에 알림 선이 35/65 → 30/70. 이미 넘어 있던 것은 「🔇 선 바뀔 때 이미 넘어 있음」으로
+  기록만 되는지 `kis_alerts.jsonl`·`kis_web.log` 로 본다.
+- **텔레그램 칸이 따로 도는지** (54번) — 텔레그램이 꺼져 있어 못 봤다. 켜면 `kis_web.log` 에 「텔레그램 …」 줄이 알림과 따로 찍히는지.
+- **죽은 실시간 연결 다시 붙기** (52번) — 5분 동안 아무것도 안 오면 「연결 끊김 (LiveStale)」 뒤 다시 붙는지. 주말에는 조용해도 끊지 않는지(`quiet_ok`).
+  09-29 에 켠 뒤 5분 동안 PINGPONG 이 한 번도 없었다 — 조용한 때의 PINGPONG 간격은 모른다 (`kis_web.log` 의 「PINGPONG 간격」 줄).
+- **09-29 09:20 → 09:26 에 서버가 6분 남짓 HTTP 에 답하지 않았다** — 11:37 py-spy 로 찍은 것은 파이썬이 막힌 자리가 없었다. 한국투자증권 REST 가
+  같은 때 `SSL EOF` 를 냈다. 또 나면 `py-spy dump --pid <포트 8000 프로세스>` (py-spy 는 09-29 에 깔았다).
+- **국내 넥스트레이드 통합 실시간(H0UNCNT0)** (39·51번) — 장중 체결은 봤다. 08:00 프리·15:30 → 20:00 애프터에도 오는지 (지금은 꺼 둠).
+- **종목만 소리 끄기(19번)로 끈 종목에 실제 알림이 났을 때** 소리 없이 「🔇 종목 소리 끔」으로 남는지.
+- **새 시그널 규칙(29번)이 실시간 봉 경계에서 제때 울리는지.** **`kis_rsi.py setup`**(입력을 받아서 못 돌림).
+- **다시 켠 서버의 조기 폐장 표시** (33번, 다음은 11-27).
+- **주간거래 분봉은 「가장 최근 세션」을 준다** — 09-25 뉴욕 08:42(세션 끝나고 4시간 40분)에도 어젯밤 20:00 → 03:55 를 통째로 줬다
+  (SOXL 96/96, TSLA 94). **다음 세션이 열리기 직전까지 받아지는지** → 10-05 08:30 예약 작업이 본다 (09-28 것은 멈춰서 다시 걸었다).
   맞으면 30분 수집을 줄일지 사용자에게 묻되, **주간거래 1분봉은 세션 중 6시간 남짓만 받아지니(36번) 줄이면 1분봉 밤 봉에 구멍이 난다**고 같이 말한다.
+
+## 다음 단계
+
+1. **오늘(09-30) 09:00 뒤**: 위 「세션이 바뀔 때 선이 바뀌는지」를 기록으로 본다.
+2. **사용자에게 여쭐 것**: README 화면 사진 바꾸기(차트 작게·RSI 막대 얇게·마우스 오버 칸·세션별 알림 표), 마우스 오버 칸에 거래량 넣기(서버 재시작 필요),
+   서버를 켤 때 찍히는 「알림 목소리: Edge 음성」 줄이 오해를 산다(새 문장을 무엇으로 만들지의 뜻) — 고칠지.
+3. **10-02(금) 17:30 예약 작업** `kis-replay-review` (09-29 에 지시문을 세션별 알림 표·호출량 규칙에 맞게 고쳤다 — 쌓인 데이터로 `--offline`, 새로 받을 일은 먼저 묻는다):
+   한 달 치 채점 → 세션별 알림 표 값(TODO 4), 시그널 방아쇠, A 추세 필터·변동폭 문턱, 사전 등록 R1·R2·R3 판정(44번).
+   예약 작업이 허락을 묻다 멈출 수 있으니 그날 돌았는지 본다 (`list_task_runs`).
+4. **10-05(월) 08:30 예약 작업** `kis-night-bars-check`: 주간거래 분봉 확인 → 수집 시간 줄일지 사용자에게.
+5. 그 뒤 후보: 수집 시간 줄이기.
 
 ## 다음 단계
 
@@ -393,10 +410,10 @@
 
 | 파일 | 하는 일 |
 |---|---|
-| `kis_rsi.py` | 키(`load_keys`: 환경변수 → `kis_config.json` → `~/.bashrc`)·토큰, 분봉(미국 `fetch_bars`(keyb 거슬러), 국내 `fetch_kr_bars`(`KR_OPEN`\~`KR_CLOSE`), 주간 `fetch_night`, `merge_bars`), 국내 시장 `KR_MARKETS`/`set_kr_market`/`load_kr_market`/`kr_minutes`(`KR_TR`·`KR_CODE`), 현재가 `fetch_quote`, 지수 `MARKETS`, 세션 `us_day_session`/`us_session`/`us_closed`(`holidays.NYSE`)/`us_early_close`/`us_early_closes`, 국내 휴장 `kr_holidays`, 실시간 `live`/`subscribe`(`KR_TRS`), RSI·MACD, `Book`, `px`, 터미널 명령 |
-| `kis_web.py` | FastAPI 서버 `Hub`: 종목(`_add`, `_bars`, `_history`, `store`/`store_closed`, `_tf_books`, `load_tf`, `reorder`, `set_night`), 실시간(`kis_loop`, `session_loop`), 알림·시그널(`check_alerts`, `check_signals`, `muted`, `market_closed`, `lines`/`set_lines`, `set_mute`, `fill_after`, `scores`), 지수 띠·휴장일(`load_holidays`), `row`/`mtf`/`state`. API `/api/state` `/api/chart/{symb}` `/api/tickers` `/api/order` `/api/night` `/api/mute` `/api/lines` `/api/scores` `/api/telegram` `/api/telegram/test` `/api/sound` `/api/signal-sound` `/api/sound-when` `/api/sound/test` `/api/kr-market` `/report` `/ws`. `state` 에 `kr_market: {want, now}`, `holidays.us_early`. 옵션 `--log`, 중복 막기 |
+| `kis_rsi.py` | 키(`load_keys`: 환경변수 → `kis_config.json` → `~/.bashrc`)·토큰, 분봉(미국 `fetch_bars`(keyb 거슬러), 국내 `fetch_kr_bars`(`KR_OPEN`\~`KR_CLOSE`), 주간 `fetch_night`, `merge_bars`), 국내 시장 `KR_MARKETS`/`set_kr_market`/`load_kr_market`/`kr_minutes`(`KR_TR`·`KR_CODE`), 현재가 `fetch_quote`, 지수 `MARKETS`, 세션 `us_day_session`/`us_session`/`us_closed`(`holidays.NYSE`)/`us_early_close`/`us_early_closes`, 국내 휴장 `kr_holidays`, 실시간 `live`(`quiet_ok`, `LIVE_STALE`=300초 → `LiveStale`)/`subscribe`(`KR_TRS`)/`split_records`(건마다 칸 수를 세어 나눔), RSI·MACD, `Book`, `px`, 터미널 명령 |
+| `kis_web.py` | FastAPI 서버 `Hub`: 종목(`_add`, `_bars`, `_history`, `store`/`store_closed`, `_tf_books`, `load_tf`, `reorder`, `set_night`), 실시간(`kis_loop`, `session_loop`), 알림·시그널(`check_alerts`, `check_telegram`, `gate`, `check_signals`, `muted`, `market_closed`, 세션별 선 `session_of`/`grid_lines`/`lines(symb, kind)`/`signal_lines`/`set_grid`·`bar_session`, `set_mute`, `fill_after`, `scores`), 지수 띠·휴장일(`load_holidays`), `row`/`mtf`/`state`. API `/api/state` `/api/chart/{symb}` `/api/tickers` `/api/order` `/api/night` `/api/mute` `/api/session-lines` `/api/scores` `/api/telegram` `/api/telegram/test` `/api/sound` `/api/signal-sound` `/api/sound-when` `/api/sound/test` `/api/kr-market` `/report` `/ws`. `state` 에 `kr_market: {want, now}`, `holidays.us_early`, `session_lines`·`grid_kinds`. 옵션 `--log`, 중복 막기 |
 | `kis_alert.py` | `Lines`/`DEFAULT_LINES`, `Gate(lines)`(선·재무장·쿨다운, `check(v, now)`), `level_of`/`edge_of`, 읽는 법 `TTS_SAY_AS`, 문장 `say_breach`/`say_signal`/`phrases`, `Voice`(캐시 `path`, 로컬/Edge/SAPI, `greet`), `trim_wav` |
-| `kis_signal.py` | 매수·매도 시그널 (`rsi_band`, `signals(lines=)` — RSI 복귀 방아쇠) |
+| `kis_signal.py` | 매수·매도 시그널 (`rsi_band`, `signals(lines=)` — RSI 복귀 방아쇠. `lines` 는 선 하나 또는 봉 → 선 함수) |
 | `kis_replay.py` | 알림 채점(되감기, 미국·국내, `--lines`, `lines_for`, `session`(조기 폐장 앎), `ts`(빠른 날짜 풀기), `score`/`exit_index`/`ret`) + `--collect`(모든 종목 1분봉 `topup_minutes`/`last_minute`(`MIN_DAYS`=25) + 주간거래 5분봉·1분봉, 종목 `collect_tickers` = 목록 + `kis_collect.json`). 분봉은 `replay_cache/bars.db`(`db`, `put_bars`, `get_bars(before=, days=)`, `get_night`/`set_night`, `migrate`) |
 | `kis_tf.py` | 1분봉 백테스트: `load_minutes`, `aggregate`, `walk_alerts`(매분 진행 중 봉 RSI → Gate), `walk_signals`, `scored`(+ `atr_pct`·`rel_volume`·`adverse`), `run_ticker`/`analyze`(봉 길이·선(`LINE_SETS`)·다이버전스(`DIV_TFS` 마다 `divergence_rows`(히든 포함, 손절익절 `bracket`)/`tag_after_divergence`)·A·B·C(`trend_rsi`/`cardwell_rows`/`rsi2_rows`)), `stats`, 터미널 표 (`--tf --by 종목 --detail --offline`) |
 | `kis_report.py` | 채점 보고서 → `replay_cache/report.html` (`build(offline, cost)`, `--fetch --open --cost`). 표: 봉 길이, 나눠서 확인, 몰린 알림 하나로(`dedupe`/`day_band`), 비용·역행, 다이버전스(히든·봉 길이별 `div_tf_section`·손절익절 `bracket_table`/`no_overlap`), 이름난 로직(`famous_section`/`verdict_table`/`rule_table`), 변동폭(`atr_table`/`gate_table`), 거래량, 종목×봉, 종목별 선, 5분봉 종류·세션, 실제 알림 |
@@ -409,13 +426,13 @@
 | `README.md`, `TODO.md`, `NOTES.md`, `requirements.txt`, `docs/screen_2026-09-25_2.png` | |
 
 저장소에 안 올라가는 것(`.gitignore`): `kis_config.json`, `kis_token.json`, `kis_exchange.json`, `kis_watchlist.json`(종목 목록), `kis_collect.json`(1분봉만 쌓을 종목),
-`kis_settings.json`(소리·인사·`night`·`sound_sessions`·`quiet`·`mute`·`lines`·`telegram`·`kr_market`), `kis_alerts.jsonl`(알림 기록 + after 줄), `kis_holidays.json`,
+`kis_settings.json`(소리·인사·`night`·`sound_sessions`·`quiet`·`mute`·`session_lines`·`telegram`·`kr_market`·`tts_engine`·`tts_gain`), `kis_alerts.jsonl`(알림 기록 + after 줄), `kis_holidays.json`,
 `NOTES.local.md`(저장소에 안 올리는 노트 — 시작 인사 목소리), `tts_cache/`(+ `backup_sohee/`), `replay_cache/`(`bars.db`(5분봉 nmin=5, 1분봉 nmin=1), `collect.log`, `json_backup/`, `report.html`),
 `kis_web.log*`, `.venv*/`(로컬 TTS 는 `.venv_tts`), `.claude/`. 저장소 폴더의 `start` 파일은 사용자 것이라 건드리지 않는다.
 
 ## 시험할 때
 
-- **규칙을 고치면 `python -m unittest discover tests` 부터** (74개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
+- **규칙을 고치면 `python -m unittest discover tests` 부터** (81개, 네트워크·실제 파일 안 씀). 새 규칙은 `tests/test_rules.py` 에 시험도 더한다.
   `Gate` 시험은 시각을 `N`(10억 초)부터 준다 — 첫 쿨다운이 0 초부터 세어진다.
 - 키: `source ~/.bashrc` 하거나, 이제는 `load_keys` 가 `.bashrc` 를 직접 읽는다. 키 값은 화면에 찍지 않는다.
 - Git Bash 에서 한글: `PYTHONIOENCODING=utf-8`.
