@@ -913,6 +913,21 @@ class MinuteTest(unittest.TestCase):
 
 
 
+class LiveStaleTest(unittest.TestCase):
+    def test_silent_connection_raises(self):
+        # 연결은 열려 있는데 아무것도 안 오면 LIVE_STALE 뒤 LiveStale
+        import asyncio, sys as _sys
+        class FakeWS:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def send(self, m): pass
+            async def recv(self): await asyncio.sleep(3600)
+        fake = types.SimpleNamespace(connect=lambda *a, **kw: FakeWS())
+        with mock.patch.dict(_sys.modules, {"websockets": fake}), mock.patch.object(k, "LIVE_STALE", 0.05):
+            with self.assertRaises(k.LiveStale):
+                asyncio.run(k.live("key", ["DNASTSLA"], on_tick=lambda d: None))
+
+
 class SplitRecordsTest(unittest.TestCase):
     def test_unified_has_one_more_field(self):
         # 통합 체결은 한 건 47칸 (KR_FIELDS 46칸 + 뒤에 하나). 종목코드가 맨 앞에 그대로 와야 한다

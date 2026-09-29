@@ -512,8 +512,18 @@ def split_records(data, count, n):
     return [vals[i * per:i * per + n] for i in range(count)]
 
 
+class LiveStale(ConnectionError):
+    """실시간 연결이 열려 있는데 LIVE_STALE 초 동안 아무것도 오지 않았다."""
+
+
+# 이만큼 체결도 PINGPONG 도 없으면 죽은 연결로 보고 끊는다. 09-29 에 연결은 「열림」인데 09:32 부터
+# 7시간 동안 아무것도 안 와서 서버가 그대로 멈춰 있었다 (ping_interval=None 이라 알아챌 길이 없었다).
+LIVE_STALE = 300
+
+
 async def live(approval_key, keys, on_tick=print_tick, on_open=None):
-    """on_open(ws) 을 주면 연결 직후 불러 준다. 연결 중에 구독을 넣고 빼려면 그 ws 를 쓴다."""
+    """on_open(ws) 을 주면 연결 직후 불러 준다. 연결 중에 구독을 넣고 빼려면 그 ws 를 쓴다.
+    LIVE_STALE 초 동안 아무것도 안 오면 LiveStale 를 던진다 (부르는 쪽이 다시 붙는다)."""
     import websockets
     async with websockets.connect(WS, ping_interval=None) as ws:
         for k in keys:
@@ -521,7 +531,12 @@ async def live(approval_key, keys, on_tick=print_tick, on_open=None):
         if on_open:
             on_open(ws)
         seen = set()
-        async for msg in ws:
+        last_ping = None
+        while True:
+            try:
+                msg = await asyncio.wait_for(ws.recv(), LIVE_STALE)
+            except asyncio.TimeoutError:
+                raise LiveStale(f"{LIVE_STALE}초 동안 실시간 자료가 없다") from None
             if msg[0] in "01":  # 데이터: 암호화|TR|건수|필드^필드^...
                 _, tr_id, count, data = msg.split("|", 3)
                 fields = KR_FIELDS if tr_id in KR_TRS else LIVE_FIELDS
@@ -535,6 +550,11 @@ async def live(approval_key, keys, on_tick=print_tick, on_open=None):
                 continue
             j = json.loads(msg)
             if j["header"]["tr_id"] == "PINGPONG":
+                now = time.time()
+                if last_ping and "PINGPONG" not in seen:   # 처음 한 번 간격을 남긴다 (LIVE_STALE 가 넉넉한지 보려고)
+                    seen.add("PINGPONG")
+                    print(f"PINGPONG 간격 {now - last_ping:.0f}초", flush=True)
+                last_ping = now
                 await ws.send(msg)
             else:
                 body = j.get("body", {})
