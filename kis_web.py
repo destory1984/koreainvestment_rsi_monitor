@@ -351,7 +351,8 @@ class Hub:
                 self.set_status("연결 중")
                 self.approval_key = await asyncio.to_thread(k.get_approval_key, self.appkey, self.secret)
                 keys = [b.key_for(self.day) for b in self.books.values()]
-                await k.live(self.approval_key, keys, self.on_tick, self.on_open)
+                await k.live(self.approval_key, keys, self.on_tick, self.on_open,
+                             quiet_ok=lambda: all(self.market_closed(b) for b in self.books.values()))
                 self.ws = None
                 self.set_status("연결 끊김 — 5초 뒤 다시")
                 await asyncio.sleep(5)

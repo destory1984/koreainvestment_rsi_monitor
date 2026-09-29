@@ -926,6 +926,12 @@ class LiveStaleTest(unittest.TestCase):
         with mock.patch.dict(_sys.modules, {"websockets": fake}), mock.patch.object(k, "LIVE_STALE", 0.05):
             with self.assertRaises(k.LiveStale):
                 asyncio.run(k.live("key", ["DNASTSLA"], on_tick=lambda d: None))
+            # 모든 장이 쉬면 조용해도 끊지 않는다 (0.3초 뒤 밖에서 멈춘다)
+            async def quiet():
+                await asyncio.wait_for(k.live("key", ["DNASTSLA"], on_tick=lambda d: None,
+                                              quiet_ok=lambda: True), 0.3)
+            with self.assertRaises(asyncio.TimeoutError):
+                asyncio.run(quiet())
 
 
 class SplitRecordsTest(unittest.TestCase):

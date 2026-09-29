@@ -521,9 +521,10 @@ class LiveStale(ConnectionError):
 LIVE_STALE = 300
 
 
-async def live(approval_key, keys, on_tick=print_tick, on_open=None):
+async def live(approval_key, keys, on_tick=print_tick, on_open=None, quiet_ok=None):
     """on_open(ws) 을 주면 연결 직후 불러 준다. 연결 중에 구독을 넣고 빼려면 그 ws 를 쓴다.
-    LIVE_STALE 초 동안 아무것도 안 오면 LiveStale 를 던진다 (부르는 쪽이 다시 붙는다)."""
+    LIVE_STALE 초 동안 아무것도 안 오면 LiveStale 를 던진다 (부르는 쪽이 다시 붙는다).
+    quiet_ok() 가 True 면(모든 장이 쉬는 때) 조용해도 그대로 기다린다 — 주말에 5분마다 다시 붙지 않게."""
     import websockets
     async with websockets.connect(WS, ping_interval=None) as ws:
         for k in keys:
@@ -536,6 +537,8 @@ async def live(approval_key, keys, on_tick=print_tick, on_open=None):
             try:
                 msg = await asyncio.wait_for(ws.recv(), LIVE_STALE)
             except asyncio.TimeoutError:
+                if quiet_ok and quiet_ok():
+                    continue
                 raise LiveStale(f"{LIVE_STALE}초 동안 실시간 자료가 없다") from None
             if msg[0] in "01":  # 데이터: 암호화|TR|건수|필드^필드^...
                 _, tr_id, count, data = msg.split("|", 3)
