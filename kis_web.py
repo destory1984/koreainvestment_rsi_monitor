@@ -44,6 +44,11 @@ HISTORY_DAYS = 5      # 켤 때 받은 분봉 앞에 DB(replay_cache/bars.db)에
 MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
 SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regular": "미국 정규장",
                   "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
+# 세션마다 알림(소리)·시그널·텔레그램을 낼 RSI 선 [아래, 위] (강한 선은 5 바깥). 설정 "session_lines" 로 바꾼다.
+# 미국 주간거래 알림·텔레그램은 35/65 가 너무 잦아 30/70 (09-28 전하)
+GRID_KINDS = {"alert": "알림", "signal": "시그널", "telegram": "텔레그램"}
+DEFAULT_GRID = {sess: {kind: [30, 70] if sess == "day" and kind != "signal" else [35, 65] for kind in GRID_KINDS}
+                for sess in SOUND_SESSIONS}
 
 
 class Hub:
@@ -51,7 +56,7 @@ class Hub:
         self.tickers, self.nmin, self.period = tickers, nmin, period
         self.books = {}
         self.tf = {}              # 종목 -> {분: Book}. 주 분봉 말고 나란히 보일 시간봉들 (뒤에서 받는다)
-        self.gates = {}           # 종목 -> 알림 상태
+        self.gates = {}           # 종목 -> {"alert": 소리 알림 상태, "telegram": 텔레그램 알림 상태}
         self.sup_seen = set()     # 이미 적은 억제 (종목, 종류, 까닭). 실제로 울리면 지운다
         self.events = deque(self.read_log(), maxlen=HISTORY)   # 최근 것이 앞
         self.voice = al.Voice(tts_cache)
@@ -66,13 +71,15 @@ class Hub:
         for key in SOUND_SESSIONS:
             self.settings["sound_sessions"].setdefault(key, True)
         self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
-        # 세션마다 강한 선(30/70) 알림만 울리기. 미국 주간거래는 35/65 가 너무 잦아 기본으로 켠다
-        self.settings.setdefault("strong_only", {})
-        for key in SOUND_SESSIONS:
-            self.settings["strong_only"].setdefault(key, key == "day")
+        grid = self.settings.setdefault("session_lines", {})
+        for sess, kinds in DEFAULT_GRID.items():
+            for kind, v in kinds.items():
+                grid.setdefault(sess, {}).setdefault(kind, list(v))
+        # 그리드가 대신하는 옛 설정 (세션마다 강한 선만, 종목별 선)
+        self.settings.pop("strong_only", None)
+        self.settings.pop("lines", None)
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
-        self.settings.setdefault("lines", {})        # 종목 -> [강한 아래, 아래, 위, 강한 위]. 없으면 기본 30·35·65·70
         self.settings.setdefault("tts_engine", "local")  # 알림 목소리: "local"(로컬 TTS 녹음) / "edge"(Edge 음성)
         self.voice.prefer = self.settings["tts_engine"]
         self.settings.setdefault("tts_gain", 1.0)   # 목소리만 몇 배로 키울지 (녹음이 작아서)
@@ -123,8 +130,11 @@ class Hub:
     def prefetch(self, books):
         # 인사는 늘 녹음해 둔 목소리로 읽으니 Edge 를 골랐어도 Edge 로 만들지 않는다
         texts = [t for t in self.greetings() if t] if self.voice.prefer == "local" else []
+        alert_lines = {self.grid_lines(sess, "alert") for sess in SOUND_SESSIONS}
         for b in books:
-            texts += al.phrases(b.name, b.symb, self.lines(b.symb))
+            for ln in alert_lines:
+                texts += al.phrases(b.name, b.symb, ln)
+        texts = list(dict.fromkeys(texts))
         missing = sum(not self.voice.cached(t) for t in texts)
         if missing and self.voice.prefetch(texts, lambda made, n: print(
                 f"알림 문장 {made}/{n}개 만듦" + ("" if made == n else f" — {self.voice.last_error}"),
@@ -241,7 +251,7 @@ class Hub:
         self.save_settings()
         async with self.lock:
             book.bars, book.night = await asyncio.to_thread(self._bars, book.excd, symb)
-            self.signals[symb] = ks.signals(book.bars[:-1], self.period, lines=self.lines(symb))
+            self.signals[symb] = ks.signals(book.bars[:-1], self.period, lines=self.signal_lines(book))
             self.tf[symb] = await asyncio.to_thread(self._tf_books, book)
         await self.broadcast({"type": "reload"})
 
@@ -267,8 +277,8 @@ class Hub:
             except Exception as e:
                 print(f"{symb}: 현재가 못 받음 — {e}", flush=True)
         self.books[symb] = book
-        self.gates[symb] = al.Gate(self.lines(symb))
-        self.signals[symb] = ks.signals(bars[:-1], self.period, lines=self.lines(symb))
+        self.gates[symb] = {}
+        self.signals[symb] = ks.signals(bars[:-1], self.period, lines=self.signal_lines(book))
         time.sleep(0.1)
         return book, True
 
@@ -294,10 +304,8 @@ class Hub:
             self.signals.pop(symb, None)
             self.tf.pop(symb, None)
             self.save()
-            if symb in self.settings["mute"] or symb in self.settings["lines"]:
-                if symb in self.settings["mute"]:
-                    self.settings["mute"].remove(symb)
-                self.settings["lines"].pop(symb, None)
+            if symb in self.settings["mute"]:
+                self.settings["mute"].remove(symb)
                 self.save_settings()
             self.dirty.discard(symb)
             if self.ws:
@@ -322,7 +330,7 @@ class Hub:
         """끊겼다 붙으면 그 사이 체결을 놓쳤으니 분봉을 새로 받는다."""
         for b in list(self.books.values()):
             b.bars, b.night = self._bars(b.excd, b.symb)
-            self.signals[b.symb] = ks.signals(b.bars[:-1], self.period, lines=self.lines(b.symb))
+            self.signals[b.symb] = ks.signals(b.bars[:-1], self.period, lines=self.signal_lines(b))
             self.tf[b.symb] = self._tf_books(b)
             time.sleep(0.1)
 
@@ -519,14 +527,28 @@ class Hub:
             return now.weekday() >= 5 or now.strftime("%Y-%m-%d") in self.kr_closed
         return k.us_session() is None
 
+    def gate(self, symb, kind):
+        """그 종목·쪽(alert / telegram)의 알림 상태. 세션이 바뀌어 선이 달라졌으면 새로 시작한다
+        (그때 이미 선 너머인 것은 켤 때처럼 소리 없이 기록만)."""
+        want = self.lines(symb, kind)
+        gates = self.gates.setdefault(symb, {})
+        g = gates.get(kind)
+        if g is None or g.lines != want:
+            new = al.Gate(want)
+            new.why = "시작 때부터" if g is None else "선 바뀜"
+            g = gates[kind] = new
+        return g
+
     def check_alerts(self, symbs):
         for s in symbs:
-            b, g = self.books.get(s), self.gates.get(s)
-            if not b or not g or self.market_closed(b):
+            b = self.books.get(s)
+            if not b or self.market_closed(b):
                 continue
             v = b.indicators(self.period)["rsi"]
             if v is None:
                 continue
+            self.check_telegram(b, v)
+            g = self.gate(s, "alert")
             a = g.check(v)
             if not a:
                 continue
@@ -541,27 +563,39 @@ class Hub:
                 self.sup_seen = {x for x in self.sup_seen if x[:2] != (s, a["kind"])}
             said = al.say_breach(b.name, b.symb, a["zone"] == "above", a["edge"])
             now = datetime.now()
+            why = getattr(g, "why", "시작 때부터")
             ev = {"ts": now.timestamp(), "d": now.strftime("%m-%d"), "t": now.strftime("%H:%M:%S"),
                   "bar": epoch(b.bars[-1]["time_us"]), "symb": s, "name": b.name,
                   "rsi": v, "price": b.price, "start": a["start"], "zone": a["zone"], "strength": a["strength"],
                   "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
-                          + (" (시작 때부터)" if a["start"] else ""),
+                          + (f" ({why})" if a["start"] else ""),
                   "suppressed": a.get("suppressed", ""),
-                  # 켤 때 이미 선 너머였던 것은 기록만 한다. 켤 때마다 알림이 몰려 울리지 않게
-                  "muted": "" if a.get("suppressed") else "켤 때 이미 넘어 있음" if a["start"]
-                           else self.muted(b, a["strength"])}
+                  # 켤 때(선이 바뀔 때) 이미 선 너머였던 것은 기록만 한다. 켤 때마다 알림이 몰려 울리지 않게
+                  "muted": "" if a.get("suppressed") else
+                           ("켤 때 이미 넘어 있음" if why == "시작 때부터" else "선 바뀔 때 이미 넘어 있음")
+                           if a["start"] else self.muted(b)}
             self.events.appendleft(ev)
             with ALERT_LOG.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             print(f"{ev['t']} 알림 {b.name} {ev['text']} RSI {v:.2f}"
                   + (f" — 억제 ({ev['suppressed']})" if ev["suppressed"] else ""), flush=True)
-            if not ev["suppressed"] and not a["start"] and self.settings["telegram"]:
-                self.tg.send(tg.alert_text(b.name, b.excd, ev), silent=bool(ev["muted"]))
             if not ev["suppressed"] and self.settings["sound"] and not ev["muted"]:
                 strong = a["strength"] == "strong"
                 self.voice.say(said if (not strong or al.SAY_STRONG) else "",
                                "full" if strong else "short")
             asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
+
+    def check_telegram(self, b, v):
+        """텔레그램 칸 선으로 따로 넘음을 센다. 소리 알림과 따로 움직인다.
+        억제된 것과 켤 때(선이 바뀔 때) 이미 넘어 있던 것은 안 보낸다. 소리를 가린 때는 알림음 없이."""
+        a = self.gate(b.symb, "telegram").check(v)
+        if not a or a.get("suppressed") or a["start"] or not self.settings["telegram"]:
+            return
+        now = datetime.now()
+        ev = {"t": now.strftime("%H:%M:%S"), "rsi": v, "price": b.price, "zone": a["zone"], "strength": a["strength"],
+              "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"}
+        print(f"{ev['t']} 텔레그램 {b.name} {ev['text']} RSI {v:.2f}", flush=True)
+        self.tg.send(tg.alert_text(b.name, b.excd, ev), silent=bool(self.muted(b)))
 
     def check_signals(self, symbs):
         """앞 봉이 닫힌 종목의 시그널을 다시 셈한다. 방금 닫힌 봉에서 새로 났으면 알린다."""
@@ -570,7 +604,7 @@ class Hub:
             if not b or len(b.bars) < 3 or self.market_closed(b):
                 continue
             old = {(x.bar, x.side) for x in self.signals.get(s, [])}
-            self.signals[s] = ks.signals(b.bars[:-1], self.period, lines=self.lines(s))
+            self.signals[s] = ks.signals(b.bars[:-1], self.period, lines=self.signal_lines(b))
             just = b.bars[-2]["time_us"]
             for x in self.signals[s]:
                 if x.bar != just or (x.bar, x.side) in old:
@@ -647,9 +681,8 @@ class Hub:
         return {"side": x.side, "word": x.word, "grade": x.grade, "trend": x.trend,
                 "bar": epoch(x.bar)}
 
-    def muted(self, book, strength=None):
-        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열.
-        strength 는 선 알림의 세기("warn"/"strong"). 시그널은 None 이라 강한 선만 규칙을 안 탄다."""
+    def muted(self, book):
+        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열."""
         if book.symb in self.settings["mute"]:
             return "종목 소리 끔"
         q = self.settings["quiet"]
@@ -660,35 +693,57 @@ class Hub:
         key = "kr" if book.excd == "KRX" else k.us_session()
         if key and not self.settings["sound_sessions"].get(key, True):
             return f"{SOUND_SESSIONS[key]} 소리 끔"
-        if key and strength == "warn" and self.settings.get("strong_only", {}).get(key):
-            return f"{SOUND_SESSIONS[key]} 강한 선만"
         return ""
 
-    def lines(self, symb):
-        """그 종목의 RSI 선. 설정에 없거나 틀렸으면 기본."""
+    def session_of(self, book, t=None):
+        """그 종목의 지금(또는 t, 미국은 동부 시각) 세션 키: "kr" / "day" / "pre" / "regular" / "after".
+        미국 장이 쉬는 때는 "regular" 로 둔다 (그때는 알림을 보지 않는다)."""
+        if book.excd == "KRX":
+            return "kr"
+        return k.us_session(t) or "regular"
+
+    def grid_lines(self, sess, kind):
+        """그리드 한 칸의 선. 틀렸으면 기본."""
         try:
-            return al.Lines.parse(self.settings["lines"][symb])
+            return al.Lines.parse(self.settings["session_lines"][sess][kind])
         except (KeyError, ValueError, TypeError):
-            return al.DEFAULT_LINES
+            return al.Lines.parse(DEFAULT_GRID[sess][kind])
 
-    async def set_lines(self, symb, values):
-        """종목 선을 바꾼다 (values 가 None 이거나 기본과 같으면 기본으로). 알림 상태를 새로 시작하고 시그널을 다시 셈한다."""
+    def lines(self, symb, kind="alert"):
+        """그 종목의 지금 세션 선 (kind: alert / signal / telegram)."""
         book = self.books.get(symb)
-        if not book:
-            raise KeyError(symb)
-        ln = al.Lines.parse(values) if values else al.DEFAULT_LINES   # 틀리면 ValueError
-        if ln == al.DEFAULT_LINES:
-            self.settings["lines"].pop(symb, None)
-        else:
-            self.settings["lines"][symb] = list(ln)
-        self.save_settings()
-        self.gates[symb] = al.Gate(ln)
-        self.sup_seen = {x for x in self.sup_seen if x[0] != symb}
-        self.signals[symb] = ks.signals(book.bars[:-1], self.period, lines=ln)
-        self.prefetch([book])   # 「25 미만」 같은 새 문장
-        await self.broadcast({"type": "rows", "rows": [self.row(book)]})
-        return ln
+        return self.grid_lines(self.session_of(book) if book else "regular", kind)
 
+    def signal_lines(self, book):
+        """봉마다 그 봉이 속한 세션의 시그널 선을 돌려주는 함수 (ks.signals 에 넘긴다).
+        지난 봉은 그 봉의 세션 선으로 셈하니 세션이 바뀌어도 차트의 지난 시그널이 그대로다."""
+        if book.excd == "KRX":
+            ln = self.grid_lines("kr", "signal")
+            return lambda b: ln
+        memo = {}
+
+        def pick(b):
+            t = b["time_us"]
+            if t not in memo:
+                us = datetime.strptime(t, "%Y%m%d %H%M%S").replace(tzinfo=k.NEW_YORK)
+                memo[t] = self.grid_lines(k.us_session(us) or "regular", "signal")
+            return memo[t]
+        return pick
+
+    async def set_grid(self, sess, kind, values):
+        """그리드 한 칸을 바꾼다. 알림·텔레그램은 다음 체결 때 새 선으로 다시 시작하고, 시그널은 다시 셈한다."""
+        if sess not in SOUND_SESSIONS or kind not in GRID_KINDS:
+            raise KeyError(f"{sess}/{kind}")
+        ln = al.Lines.parse(values)   # 틀리면 ValueError
+        self.settings["session_lines"][sess][kind] = [int(x) if x == int(x) else x for x in (ln.lower, ln.upper)]
+        self.save_settings()
+        if kind == "signal":
+            async with self.lock:
+                for b in self.books.values():
+                    self.signals[b.symb] = ks.signals(b.bars[:-1], self.period, lines=self.signal_lines(b))
+        if kind == "alert":
+            self.prefetch(list(self.books.values()))   # 「25 미만」 같은 새 문장
+        return ln
     async def set_mute(self, symb, on):
         if symb not in self.books:
             raise KeyError(symb)
@@ -713,7 +768,7 @@ class Hub:
     def row(self, b):
         ind = b.indicators(self.period)
         bar = b.bars[-1] if b.bars else None
-        g = self.gates.get(b.symb)
+        g = self.gates.get(b.symb, {}).get("alert")
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
                 "time": b.us_time, "day": b.day_quote, "night": b.night, **ind,
                 "mute": b.symb in self.settings["mute"],
@@ -746,7 +801,7 @@ class Hub:
                 "max": MAX_TICKERS, "sound": self.settings["sound"], "markets": self.markets,
                 "signal_sound": self.settings["signal_sound"],
                 "sound_sessions": self.settings["sound_sessions"], "quiet": self.settings["quiet"],
-                "strong_only": self.settings["strong_only"],
+                "session_lines": self.settings["session_lines"], "grid_kinds": GRID_KINDS,
                 "session_names": SOUND_SESSIONS, "holidays": self.holidays(),
                 "telegram": {"ready": self.tg.ready, "on": self.settings["telegram"], "error": self.tg.last_error},
                 "kr_market": {"want": self.settings["kr_market"], "now": k.KR_MARKET},
@@ -910,25 +965,22 @@ async def api_mute(symb: str = Body(...), on: bool = Body(...)):
     return {"symb": symb.upper(), "mute": on}
 
 
-@app.post("/api/lines")
-async def api_lines(symb: str = Body(...), lines: list = Body(None)):
-    """종목 RSI 선. lines 는 [강한 아래, 아래, 위, 강한 위] 나 [아래, 위]. null 이면 기본(30·35·65·70)으로."""
+@app.post("/api/session-lines")
+async def api_session_lines(session: str = Body(...), kind: str = Body(...), lines: list = Body(...)):
+    """그리드 한 칸. session 은 day/pre/regular/after/kr, kind 는 alert/signal/telegram, lines 는 [아래, 위]."""
     try:
-        ln = await hub.set_lines(symb.upper(), lines)
+        await hub.set_grid(session, kind, lines)
     except KeyError:
-        raise HTTPException(404, symb)
+        raise HTTPException(404, f"{session}/{kind}")
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
-    return {"symb": symb.upper(), "lines": ln._asdict()}
+    await hub.broadcast({"type": "rows", "rows": [hub.row(b) for b in hub.books.values()]})
+    return {"session_lines": hub.settings["session_lines"]}
 
 
 @app.post("/api/sound-when")
-def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None), strong_only: dict = Body(None)):
-    """소리 나는 때. sessions 는 {"day": true, ...}, quiet 는 {"on", "from": "HH:MM", "to": "HH:MM"},
-    strong_only 는 {"day": true, ...} (그 세션엔 강한 선 알림만 울림)."""
-    for key, on in (strong_only or {}).items():
-        if key in SOUND_SESSIONS:
-            hub.settings["strong_only"][key] = bool(on)
+def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None)):
+    """소리 나는 때. sessions 는 {"day": true, ...}, quiet 는 {"on", "from": "HH:MM", "to": "HH:MM"}."""
     if sessions:
         for key, on in sessions.items():
             if key in SOUND_SESSIONS:
@@ -944,8 +996,7 @@ def api_sound_when(sessions: dict = Body(None), quiet: dict = Body(None), strong
         if "on" in quiet:
             q["on"] = bool(quiet["on"])
     hub.save_settings()
-    return {"sound_sessions": hub.settings["sound_sessions"], "quiet": hub.settings["quiet"],
-            "strong_only": hub.settings["strong_only"]}
+    return {"sound_sessions": hub.settings["sound_sessions"], "quiet": hub.settings["quiet"]}
 
 
 @app.post("/api/signal-sound")

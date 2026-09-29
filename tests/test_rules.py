@@ -121,30 +121,82 @@ class LinesTest(unittest.TestCase):
         self.assertTrue(ks.signals(bars))
         self.assertEqual([x for x in ks.signals(bars, lines=wide) if x.side == "buy"], [])
 
-    def test_server_set_lines(self):
+    def grid_hub(self):
         h = w.Hub.__new__(w.Hub)
-        h.settings = {"lines": {}}
-        h.books = {"SOXL": types.SimpleNamespace(symb="SOXL", bars=SignalTest().v_shape(15, 15))}
-        h.gates, h.signals, h.sup_seen, h.period = {}, {}, {("SOXL", "above", "쿨다운")}, 14
+        h.settings = {"session_lines": {k: {kind: list(v) for kind, v in kinds.items()}
+                                        for k, kinds in w.DEFAULT_GRID.items()},
+                      "quiet": {"on": False, "from": "00:00", "to": "07:00"},
+                      "sound_sessions": {key: True for key in w.SOUND_SESSIONS}, "mute": [], "telegram": True}
+        h.books = {"SOXL": types.SimpleNamespace(symb="SOXL", name="SOXL", excd="NAS", price=10.0,
+                                                 bars=SignalTest().v_shape(15, 15)),
+                   "005930": types.SimpleNamespace(symb="005930", name="삼성전자", excd="KRX", price=1.0, bars=[])}
+        h.gates, h.signals, h.sup_seen, h.period = {}, {}, set(), 14
         h.prefetch = lambda books: None
-        sent = []
+        h.lock = asyncio.Lock()
+        return h
 
-        async def bc(m):
-            sent.append(m)
-        h.broadcast = bc
-        h.row = lambda b: {"symb": b.symb, "lines": h.lines(b.symb)._asdict()}
+    def test_grid_defaults(self):
+        # 나이트(미국 주간거래) 알림·텔레그램만 30/70, 나머지는 35/65
+        self.assertEqual(w.DEFAULT_GRID["day"], {"alert": [30, 70], "signal": [35, 65], "telegram": [30, 70]})
+        self.assertEqual(w.DEFAULT_GRID["regular"]["alert"], [35, 65])
+        h = self.grid_hub()
+        with mock.patch.object(k, "us_session", lambda t=None: "day"):
+            self.assertEqual(h.lines("SOXL"), al.Lines(25, 30, 70, 75))
+            self.assertEqual(h.lines("SOXL", "signal"), al.Lines(30, 35, 65, 70))
+            self.assertEqual(h.lines("005930"), al.Lines(30, 35, 65, 70))   # 국내는 "kr" 줄
+        h.settings["session_lines"]["kr"]["alert"] = "망가진 값"
+        self.assertEqual(h.lines("005930"), al.Lines(30, 35, 65, 70))       # 틀리면 기본
+
+    def test_set_grid(self):
+        h = self.grid_hub()
         with mock.patch.object(w, "SETTINGS", temp_path(".json")):
-            asyncio.run(h.set_lines("SOXL", [25, 75]))
-            self.assertEqual(h.settings["lines"]["SOXL"], [20, 25, 75, 80])
-            self.assertEqual(h.gates["SOXL"].lines, al.Lines(20, 25, 75, 80))
-            self.assertEqual(h.sup_seen, set())
-            self.assertEqual(sent[-1]["rows"][0]["lines"]["upper"], 75)
-            asyncio.run(h.set_lines("SOXL", [30, 35, 65, 70]))       # 기본과 같으면 설정에서 지운다
-            self.assertNotIn("SOXL", h.settings["lines"])
+            asyncio.run(h.set_grid("regular", "alert", [25, 75]))
+            self.assertEqual(h.settings["session_lines"]["regular"]["alert"], [25, 75])
+            asyncio.run(h.set_grid("pre", "signal", [20.5, 80]))
+            self.assertEqual(h.settings["session_lines"]["pre"]["signal"], [20.5, 80])
+            self.assertIn("SOXL", h.signals)                                # 시그널은 다시 셈한다
             with self.assertRaises(ValueError):
-                asyncio.run(h.set_lines("SOXL", [70, 30]))
-        h.settings["lines"]["X"] = "망가진 값"
-        self.assertEqual(h.lines("X"), al.DEFAULT_LINES)
+                asyncio.run(h.set_grid("pre", "alert", [70, 30]))
+            with self.assertRaises(KeyError):
+                asyncio.run(h.set_grid("night", "alert", [30, 70]))
+
+    def test_gate_restarts_when_session_changes(self):
+        h = self.grid_hub()
+        with mock.patch.object(k, "us_session", lambda t=None: "regular"):
+            g1 = h.gate("SOXL", "alert")
+            self.assertEqual((g1.lines.upper, g1.why), (65, "시작 때부터"))
+            self.assertIs(h.gate("SOXL", "alert"), g1)                       # 같은 선이면 그대로
+        with mock.patch.object(k, "us_session", lambda t=None: "day"):
+            g2 = h.gate("SOXL", "alert")
+            self.assertEqual((g2.lines.upper, g2.why), (70, "선 바뀜"))
+            self.assertTrue(g2.check(72, now=N)["start"])                     # 이미 넘어 있으면 켤 때처럼
+
+    def test_telegram_has_its_own_lines(self):
+        h = self.grid_hub()
+        sent = []
+        h.tg = types.SimpleNamespace(send=lambda text, silent=False: sent.append((text, silent)))
+        b = h.books["SOXL"]
+        h.settings["session_lines"]["regular"]["telegram"] = [30, 70]
+        with mock.patch.object(k, "us_session", lambda t=None: "regular"):
+            h.check_telegram(b, 50)                                            # 처음 값 (밴드 안)
+            h.check_telegram(b, 68)
+            self.assertEqual(sent, [])                                         # 알림(65)은 넘었어도 텔레그램(70)은 아직
+            h.check_telegram(b, 71)
+            self.assertEqual(len(sent), 1)
+            self.assertIn("70 초과", sent[0][0])
+            h.settings["telegram"] = False
+            h.check_telegram(b, 76)                                            # 끄면 안 보낸다
+            self.assertEqual(len(sent), 1)
+
+    def test_signal_lines_follow_bar_session(self):
+        h = self.grid_hub()
+        h.settings["session_lines"]["day"]["signal"] = [20, 80]
+        pick = h.signal_lines(h.books["SOXL"])
+        self.assertEqual(pick({"time_us": "20260929 210000"}).lower, 20)     # 동부 21:00 = 주간거래
+        self.assertEqual(pick({"time_us": "20260929 103000"}).lower, 35)     # 정규장
+        self.assertEqual(h.signal_lines(h.books["005930"])({"time_us": "20260929 100000"}).lower, 35)
+        bars = SignalTest().v_shape(15, 15)
+        self.assertEqual(ks.signals(bars, lines=lambda b: al.DEFAULT_LINES), ks.signals(bars))
 
     def test_replay_lines_for(self):
         self.assertEqual(rp.lines_for("A", "25,75"), al.Lines(20, 25, 75, 80))
@@ -265,18 +317,6 @@ class MutedTest(unittest.TestCase):
         self.assertEqual(self.muted(h, session="regular"), "")
         h.settings["sound_sessions"]["kr"] = False
         self.assertEqual(self.muted(h, excd="KRX", symb="005930"), "국내 종목 소리 끔")
-
-    def test_strong_only(self):
-        h = self.hub(strong_only={"day": True})
-        FakeNow.fixed = datetime(2026, 9, 25, 12, 0)
-        with mock.patch.object(w, "datetime", FakeNow), mock.patch.object(k, "us_session", lambda: "day"):
-            b = types.SimpleNamespace(excd="NAS", symb="MU")
-            self.assertEqual(h.muted(b, "warn"), "미국 주간거래 강한 선만")
-            self.assertEqual(h.muted(b, "strong"), "")
-            self.assertEqual(h.muted(b), "")   # 시그널은 그대로
-        self.assertEqual(self.muted(h, session="regular"), "")
-        with mock.patch.object(k, "us_session", lambda: "regular"):
-            self.assertEqual(h.muted(types.SimpleNamespace(excd="NAS", symb="MU"), "warn"), "")
 
     def test_market_closed(self):
         h = self.hub()

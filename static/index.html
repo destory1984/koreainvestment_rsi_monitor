@@ -66,6 +66,11 @@
                 font-size: calc(var(--fs) * .9); line-height: 1.5; max-width: calc(var(--fs) * 30); }
   .menu .mhead { padding: 8px 8px 2px; border-top: 1px solid var(--line); margin-top: 4px; font-weight: 600; }
   .menu .mhead small { font-weight: 400; color: var(--muted); }
+  .lgrid { border-collapse: collapse; margin: 2px 4px 6px; font-size: calc(var(--fs) * 0.95); }
+  .lgrid th { font-weight: 500; color: var(--muted); text-align: left; padding: 2px 6px 2px 0; white-space: nowrap; }
+  .lgrid td { padding: 2px 6px 2px 0; white-space: nowrap; }
+  .lgrid input { width: calc(var(--fs) * 3); font: inherit; color: var(--text); background: var(--bg);
+                 border: 1px solid var(--line); border-radius: 4px; padding: 1px 3px; text-align: right; }
   .menu .mchecks { display: flex; flex-wrap: wrap; gap: 0 2px; padding: 0 2px; max-width: calc(var(--fs) * 30); }
   .menu .qtimes { justify-content: flex-end; gap: 6px; color: var(--muted); }
   .menu .qtimes input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line);
@@ -182,15 +187,15 @@
   <p class="more" hidden>RSI 가 35 밑(매수 쪽)이나 65 위(매도 쪽)로 가면 12봉 동안 대기하고, 그 사이 닫힌 봉의 RSI 가 선 안으로 돌아오면(35 위로 올라오면 매수, 65 밑으로 내려오면 매도) 「테슬라 매수 시그널」처럼 읽는다. 선을 넘고 되돌아서는 것을 보니 선 알림보다 조금 늦다. 봉이 닫힐 때만 본다. 대기 동안 RSI 가 30·70 까지 갔으면 「강」, 아니면 「약」. MACD 가 0 위에서 난 매수(0 아래에서 난 매도)는 「추세 순응」, 반대면 「역추세」. 표의 매수/매도 칸과 차트 화살표가 이것이다.</p>
   <div class="mhead">소리 나는 때 <small>꺼 둔 때도 알림 기록에는 쌓인다</small></div>
   <div class="mchecks" id="sesschecks"></div>
-  <div class="mhead">강한 선(30/70)만 울릴 때 <small>35/65 알림은 소리 없이 기록만</small></div>
-  <div class="mchecks" id="strongchecks"></div>
+  <div class="mhead">세션별 RSI 선 <small>아래 / 위. 강한 선은 5 바깥 (30/70 이면 25·75)</small></div>
+  <table class="lgrid" id="lgrid"></table>
   <div class="mrow"><span class="mlabel">조용한 시각<small>이 PC 시각. 23:00~07:00 처럼 자정을 넘어도 된다</small></span>
     <button class="switch" id="quiet" role="switch" aria-checked="false" aria-label="조용한 시각"></button></div>
   <div class="mrow qtimes"><input type="time" id="qfrom" aria-label="조용한 시각 시작"> ~ <input type="time" id="qto" aria-label="조용한 시각 끝"></div>
-  <div class="mrow"><span class="mlabel"><span>텔레그램 <button type="button" class="info" aria-expanded="false" title="선 알림·시그널이 울릴 때 텔레그램으로도 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다." aria-label="자세히">ⓘ</button></span><small id="tgnote">폰으로도 받기</small></span>
+  <div class="mrow"><span class="mlabel"><span>텔레그램 <button type="button" class="info" aria-expanded="false" title="RSI 가 위 표의 텔레그램 칸 선을 넘을 때(소리 알림과 따로)와 매수·매도 시그널이 날 때 텔레그램으로 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다." aria-label="자세히">ⓘ</button></span><small id="tgnote">폰으로도 받기</small></span>
     <span class="mbtns"><button class="hbtn" id="tgtest" title="시험 메시지를 한 번 보낸다">보내 보기</button>
     <button class="switch" id="telegram" role="switch" aria-checked="false" aria-label="텔레그램으로 보내기"></button></span></div>
-  <p class="more" hidden>선 알림·시그널이 울릴 때 텔레그램으로도 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다.</p>
+  <p class="more" hidden>RSI 가 위 표의 텔레그램 칸 선을 넘을 때(소리 알림과 따로)와 매수·매도 시그널이 날 때 텔레그램으로 보낸다. 억제된 것과 켤 때 이미 넘어 있던 것은 안 보낸다. 소리를 가린 알림(조용한 시각·세션 끔·종목 소리 끔)은 알림음 없이 보낸다. 봇 토큰·대화방은 환경변수 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Webull 판과 같은 것) 또는 python kis_telegram.py setup 으로 넣는다.</p>
   <div class="mrow"><span class="mlabel"><span>국내 넥스트레이드 <button type="button" class="info" aria-expanded="false" title="켜면 국내 종목을 KRX 와 넥스트레이드를 합친 통합 시세로 본다. 실시간(H0UNCNT0)과 분봉이 모두 통합이 되고, 프리마켓 08:00~08:50 과 애프터마켓 15:30~20:00 에도 RSI 가 움직이고 알림이 난다. 끄면 KRX 정규장(09:00~15:30)만. 실시간 구독과 분봉이 바뀌니 서버를 다시 켜야 적용된다." aria-label="자세히">ⓘ</button></span><small id="krnote">08:00~20:00 통합 시세</small></span>
     <button class="switch" id="krmarket" role="switch" aria-checked="false" aria-label="국내 넥스트레이드 포함"></button></div>
   <p class="more" hidden>켜면 국내 종목을 KRX 와 넥스트레이드를 합친 통합 시세로 본다. 실시간(H0UNCNT0)과 분봉이 모두 통합이 되고, 프리마켓 08:00~08:50 과 애프터마켓 15:30~20:00 에도 RSI 가 움직이고 알림이 난다. 끄면 KRX 정규장(09:00~15:30)만. 실시간 구독과 분봉이 바뀌니 서버를 다시 켜야 적용된다.</p>
@@ -354,10 +359,10 @@ function mtfCell(r) {
 
 function zoneCell(r) {
   const [zone, strength] = r.zone || ["neutral", ""], ln = linesOf(r);
-  // 종목 선을 바꾼 종목만 선을 보인다. 칸을 누르면 바꾼다
+  // 지금 세션 선이 기본(35/65)과 다르면 선을 보인다. 선은 「⚙ 설정」의 세션별 RSI 선 표에서 바꾼다
   const tag = customLines(r) ? `<span class="tag manual">${ln.lower}/${ln.upper}</span>` : "";
-  const open = `<span class="zcell" data-symb="${esc(r.symb)}" ` +
-               `title="이 종목 RSI 선 ${ln.strong_lower}·${ln.lower}·${ln.upper}·${ln.strong_upper}. 누르면 바꾼다">`;
+  const open = `<span class="zcell" title="지금 세션 알림 선 ${ln.strong_lower}·${ln.lower}·${ln.upper}·${ln.strong_upper}. ` +
+               `「⚙ 설정」의 세션별 RSI 선에서 바꾼다">`;
   if (zone === "neutral") return open + tag + `<span class="dim">밴드 안${r.rearm ? " · 재무장 대기" : ""}</span></span>`;
   const edge = zone === "above" ? (strength === "strong" ? ln.strong_upper : ln.upper)
                                 : (strength === "strong" ? ln.strong_lower : ln.lower);
@@ -365,38 +370,10 @@ function zoneCell(r) {
   return open + tag + `<span class="${cls}">${edge} ${zone === "above" ? "초과" : "미만"}</span></span>`;
 }
 
-// 종목 선 바꾸기: 알림 줄에 칸 넷을 띄운다 (강한 아래·아래·위·강한 위)
-function editLines(symb) {
-  const r = rows[symb];
-  if (!r) return;
-  const ln = linesOf(r), keys = ["strong_lower", "lower", "upper", "strong_upper"];
-  $("#msg").className = "sub";
-  $("#msg").innerHTML = `${esc(r.excd === "KRX" ? r.name : symb)} RSI 선: ` +
-    keys.map(k => `<input class="lnum" type="number" min="0" max="100" step="1" value="${ln[k]}" data-k="${k}" ` +
-                  `aria-label="${{ strong_lower: "강한 아래", lower: "아래", upper: "위", strong_upper: "강한 위" }[k]}">`).join(" ") +
-    ` <button type="button" class="linkbtn" id="lnsave">저장</button>` +
-    ` <button type="button" class="linkbtn" id="lnreset">기본(${cfg.strong_lower}·${cfg.lower}·${cfg.upper}·${cfg.strong_upper})</button>` +
-    ` <span class="dim">바꾸면 이 종목 알림 상태가 새로 시작한다</span>`;
-  const post = async lines => {
-    const res = await fetch("/api/lines", { method: "POST", headers: { "Content-Type": "application/json" },
-                                            body: JSON.stringify({ symb, lines }) }).catch(() => null);
-    if (!res || !res.ok) return setMsg(`${symb} 선을 바꾸지 못했다` + (res ? " — " + (await res.json()).detail : ""), true);
-    const j = await res.json();
-    setMsg(`${symb}: RSI 선 ${j.lines.strong_lower}·${j.lines.lower}·${j.lines.upper}·${j.lines.strong_upper}`);
-    if (symb === selected) setTimeout(() => select(symb), 300);   // 차트 선도 새로
-  };
-  $("#lnsave").onclick = () => post([...$("#msg").querySelectorAll(".lnum")].map(x => +x.value));
-  $("#lnreset").onclick = () => post(null);
-}
-$("#rows").addEventListener("click", e => {
-  const t = e.target.closest(".zcell");
-  if (t) editLines(t.dataset.symb);
-});
-
 function lastCell(r) {
   const a = r.last_alert;
   if (!a) return "";
-  return `<b class="${a.zone === "above" ? "up" : "down"}">${esc(a.text.replace(" (시작 때부터)", ""))}</b> ${ago(a.ts)}`;
+  return `<b class="${a.zone === "above" ? "up" : "down"}">${esc(a.text.replace(/ \((시작 때부터|선 바뀜)\)/, ""))}</b> ${ago(a.ts)}`;
 }
 
 function sigCell(r) {
@@ -1036,9 +1013,7 @@ function setSoundWhen(st) {
   if (st.session_names) cfg.session_names = st.session_names;
   $("#sesschecks").innerHTML = Object.entries(cfg.session_names || {}).map(([key, name]) =>
     `<label><input type="checkbox" value="${esc(key)}"${cfg.sound_sessions[key] ? " checked" : ""}>${esc(name)}</label>`).join("");
-  cfg.strong_only = st.strong_only || {};
-  $("#strongchecks").innerHTML = st.strong_only ? Object.entries(cfg.session_names || {}).map(([key, name]) =>
-    `<label><input type="checkbox" value="${esc(key)}"${cfg.strong_only[key] ? " checked" : ""}>${esc(name)}</label>`).join("") : "";
+  if (st.session_lines) setGrid(st.session_lines, st.grid_kinds);
   $("#quiet").setAttribute("aria-checked", cfg.quiet.on);
   $("#qfrom").value = cfg.quiet.from; $("#qto").value = cfg.quiet.to;
   $("#qfrom").disabled = $("#qto").disabled = !cfg.quiet.on;
@@ -1053,7 +1028,33 @@ async function postSoundWhen(body) {
 }
 
 $("#sesschecks").onchange = e => postSoundWhen({ sessions: { [e.target.value]: e.target.checked } });
-$("#strongchecks").onchange = e => postSoundWhen({ strong_only: { [e.target.value]: e.target.checked } });
+// 세션별 RSI 선: 줄은 세션, 칸은 알림·시그널·텔레그램, 칸마다 아래/위
+function setGrid(grid, kinds) {
+  if (kinds) cfg.grid_kinds = kinds;
+  cfg.session_lines = grid;
+  const ks = Object.entries(cfg.grid_kinds || {});
+  const num = (sess, kind, i, v) => `<input type="number" min="0" max="100" step="1" value="${v}" ` +
+    `data-s="${esc(sess)}" data-k="${esc(kind)}" data-i="${i}" aria-label="${esc(cfg.session_names[sess])} ${esc(cfg.grid_kinds[kind])} ${i ? "위" : "아래"}">`;
+  $("#lgrid").innerHTML = `<tr><th></th>${ks.map(([, name]) => `<th>${esc(name)}</th>`).join("")}</tr>` +
+    Object.entries(cfg.session_names || {}).map(([sess, name]) => `<tr><th>${esc(name.replace("미국 ", ""))}</th>` +
+      ks.map(([kind]) => { const v = (grid[sess] || {})[kind] || ["", ""];
+        return `<td>${num(sess, kind, 0, v[0])} / ${num(sess, kind, 1, v[1])}</td>`; }).join("") + "</tr>").join("");
+}
+
+$("#lgrid").onchange = async e => {
+  const t = e.target;
+  if (!t.dataset.k) return;
+  const [lo, hi] = [0, 1].map(i => +$(`#lgrid input[data-s="${t.dataset.s}"][data-k="${t.dataset.k}"][data-i="${i}"]`).value);
+  const res = await fetch("/api/session-lines", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session: t.dataset.s, kind: t.dataset.k, lines: [lo, hi] }) }).catch(() => null);
+  if (!res || !res.ok) {
+    setMsg("RSI 선을 바꾸지 못했다" + (res ? " — " + (await res.json()).detail : ""), true);
+    return setGrid(cfg.session_lines);   // 원래 값으로
+  }
+  setGrid((await res.json()).session_lines);
+  setMsg(`${cfg.session_names[t.dataset.s]} ${cfg.grid_kinds[t.dataset.k]} 선 ${lo}/${hi}`);
+  if (selected) setTimeout(() => select(selected), 300);   // 차트 선·시그널도 새로
+};
 $("#quiet").onclick = () => postSoundWhen({ quiet: { on: !cfg.quiet.on } });
 $("#qfrom").onchange = () => $("#qfrom").value && postSoundWhen({ quiet: { from: $("#qfrom").value } });
 $("#qto").onchange = () => $("#qto").value && postSoundWhen({ quiet: { to: $("#qto").value } });

@@ -81,8 +81,9 @@ def rsi_band(bars, period=14):
 
 
 def signals(bars, period=14, arm_bars=ARM_BARS, lines=None):
-    """닫힌 봉들에서 난 시그널 전부 (오래된 것부터). lines 는 그 종목의 RSI 선 (없으면 기본)."""
-    ln = lines or al.DEFAULT_LINES
+    """닫힌 봉들에서 난 시그널 전부 (오래된 것부터). lines 는 RSI 선 (없으면 기본), 또는 봉을 받아
+    그 봉의 선을 돌려주는 함수 (세션마다 선이 다를 때 — 지난 봉은 그 봉이 속한 세션 선으로 셈한다)."""
+    pick = lines if callable(lines) else (lambda b, ln=lines or al.DEFAULT_LINES: ln)
     band = rsi_band(bars, period)
     line, sig, hist = k.macd_series([b["close"] for b in bars])
     out = []
@@ -96,6 +97,7 @@ def signals(bars, period=14, arm_bars=ARM_BARS, lines=None):
         r, lo, hi = band[i]
         if r is None:
             continue
+        ln = pick(b)
         for side in arm:
             arm[side][0] = max(0, arm[side][0] - 1)
             if not arm[side][0]:
