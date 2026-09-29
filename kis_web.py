@@ -12,6 +12,7 @@ RSI 가 35/65, 30/70 을 넘으면 서버가 말로 알린다 (kis_alert.py). �
 import argparse
 import asyncio
 import calendar
+import functools
 import json
 import re
 import sys
@@ -720,15 +721,8 @@ class Hub:
         if book.excd == "KRX":
             ln = self.grid_lines("kr", "signal")
             return lambda b: ln
-        memo = {}
-
-        def pick(b):
-            t = b["time_us"]
-            if t not in memo:
-                us = datetime.strptime(t, "%Y%m%d %H%M%S").replace(tzinfo=k.NEW_YORK)
-                memo[t] = self.grid_lines(k.us_session(us) or "regular", "signal")
-            return memo[t]
-        return pick
+        cache = {sess: self.grid_lines(sess, "signal") for sess in SOUND_SESSIONS}
+        return lambda b: cache[bar_session(b["time_us"])]
 
     async def set_grid(self, sess, kind, values):
         """그리드 한 칸을 바꾼다. 알림·텔레그램은 다음 체결 때 새 선으로 다시 시작하고, 시그널은 다시 셈한다."""
@@ -861,6 +855,15 @@ class Hub:
 
 def _num(v):
     return f"{v:g}"
+
+
+@functools.lru_cache(maxsize=50_000)
+def bar_session(time_us):
+    """미국 봉('YYYYMMDD HHMMSS', 동부 시각)의 세션 키. 봉이 닫힐 때마다 모든 봉을 다시 보니 기억해 둔다
+    (strptime 이 느리다 — 종목 13개 × 1500봉)."""
+    t = datetime(int(time_us[:4]), int(time_us[4:6]), int(time_us[6:8]),
+                 int(time_us[9:11]), int(time_us[11:13]), tzinfo=k.NEW_YORK)
+    return k.us_session(t) or "regular"
 
 
 def epoch(local_time):
