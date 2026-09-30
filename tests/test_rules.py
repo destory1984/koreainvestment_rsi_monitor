@@ -519,6 +519,19 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(k.us_early_closes([2025]), ["2025-07-03", "2025-11-28", "2025-12-24"])
         self.assertEqual(k.us_early_closes([2026]), ["2026-11-27", "2026-12-24"])   # 7/3 은 휴장(금)
 
+    def test_just_opened(self):
+        # 미국: 세션이 바뀐 뒤 1분
+        for t, want in {"2026-09-08 04:00": True, "2026-09-08 04:01": False,     # 프리
+                        "2026-09-08 09:30": True, "2026-09-08 09:31": False,     # 정규
+                        "2026-09-08 16:00": True, "2026-09-08 20:00": True,      # 애프터, 주간거래
+                        "2026-09-08 12:00": False, "2026-09-12 10:00": False,    # 장중, 토요일
+                        "2026-09-13 20:00": True}.items():                       # 일요일 밤 주간거래
+            self.assertEqual(k.just_opened(False, 60, self.at(t)), want, t)
+        # 국내: KR_OPEN 에서 1분
+        for t, want in {"09:00:00": True, "09:00:59": True, "08:59:59": False, "09:01:00": False}.items():
+            now = datetime.strptime("2026-09-28 " + t, "%Y-%m-%d %H:%M:%S")
+            self.assertEqual(k.just_opened(True, 60, now), want, t)
+
     def test_kr_holidays_cached_once_a_day(self):
         page = {"rt_cd": "0", "output": [
             {"bass_dt": "20260925", "opnd_yn": "N"}, {"bass_dt": "20260928", "opnd_yn": "Y"},

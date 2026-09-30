@@ -461,6 +461,18 @@ def us_session(now=None):
     return "pre" if 4 <= h < 9.5 else "regular" if 9.5 <= h < close else "after" if close <= h < after else None
 
 
+def just_opened(krx, secs=60, now=None):
+    """장·세션이 바뀐 지 secs 초가 안 됐는가. 첫 체결들이 튀어 RSI 가 선을 넘나드니 이때는 알림을 보지 않는다.
+    미국은 세션(주간거래·프리·정규·애프터)이 바뀔 때마다, 국내는 KR_OPEN 에서. now 는 미국이면 동부 시각, 국내면 한국 시각."""
+    if krx:
+        t = now or datetime.now()
+        start = t.replace(hour=int(KR_OPEN[:2]), minute=int(KR_OPEN[2:4]), second=0, microsecond=0)
+        return 0 <= (t - start).total_seconds() < secs
+    t = now or datetime.now(NEW_YORK)
+    sess = us_session(t)
+    return sess is not None and us_session(t - timedelta(seconds=secs)) != sess
+
+
 def kr_holidays(appkey, secret):
     """오늘부터 24일쯤 국내 장이 쉬는 날들 ['YYYY-MM-DD', ...] (국내휴장일조회 CTCA0903R).
     한국투자증권이 하루 한 번쯤만 부르라고 해서 kis_holidays.json 에 그날 받은 것을 둔다."""

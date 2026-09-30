@@ -40,6 +40,7 @@ ALERT_LOG = HERE / "kis_alerts.jsonl"   # 알림 기록. 한 줄에 하나, 서�
 HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
 AFTER = (15, 30, 60)   # 알림 뒤 이만큼 분 지나 가격이 알림 쪽으로 갔는지 본다 (kis_replay 와 같은 셈)
+OPEN_QUIET = 60     # 장·세션이 바뀐 뒤 이만큼(초)은 선 알림(소리·텔레그램)을 보지 않는다 (09-30 전하)
 AFTER_SLACK = 10 * 60  # 그 시각 뒤 이만큼(초) 안에 시작한 봉이 없으면 장이 닫힌 것으로 본다
 HISTORY_DAYS = 5      # 켤 때 받은 분봉 앞에 DB(replay_cache/bars.db)에서 이어 붙일 날짜 수. 0 이면 안 붙인다
 MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
@@ -543,7 +544,7 @@ class Hub:
     def check_alerts(self, symbs):
         for s in symbs:
             b = self.books.get(s)
-            if not b or self.market_closed(b):
+            if not b or self.market_closed(b) or k.just_opened(b.excd == "KRX", OPEN_QUIET):
                 continue
             v = b.indicators(self.period)["rsi"]
             if v is None:
