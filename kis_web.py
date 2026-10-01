@@ -40,7 +40,7 @@ ALERT_LOG = HERE / "kis_alerts.jsonl"   # 알림 기록. 한 줄에 하나, 서�
 HISTORY = 500                          # 화면에 들고 있을 알림 수
 MAX_TICKERS = 40  # 실시간 연결 하나에 41개까지 구독된다
 AFTER = (15, 30, 60)   # 알림 뒤 이만큼 분 지나 가격이 알림 쪽으로 갔는지 본다 (kis_replay 와 같은 셈)
-OPEN_QUIET = 60     # 장·세션이 바뀐 뒤 이만큼(초)은 선 알림(소리·텔레그램)을 보지 않는다 (09-30 전하)
+OPEN_QUIET = 120    # 장·세션이 바뀐 뒤 이만큼(초)은 알림(선·급등락·시그널)을 내지 않는다 (09-30 전하 1분, 10-01 2분)
 AFTER_SLACK = 10 * 60  # 그 시각 뒤 이만큼(초) 안에 시작한 봉이 없으면 장이 닫힌 것으로 본다
 HISTORY_DAYS = 5      # 켤 때 받은 분봉 앞에 DB(replay_cache/bars.db)에서 이어 붙일 날짜 수. 0 이면 안 붙인다
 MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
@@ -646,6 +646,8 @@ class Hub:
             old = {(x.bar, x.side) for x in self.signals.get(s, [])}
             self.signals[s] = ks.signals(b.bars[:-1], self.period, lines=self.signal_lines(b))
             just = b.bars[-2]["time_us"]
+            if k.just_opened(b.excd == "KRX", OPEN_QUIET):
+                continue   # 세션이 바뀌는 시각에 닫힌 봉의 시그널은 차트에만 남고 알리지 않는다
             for x in self.signals[s]:
                 if x.bar != just or (x.bar, x.side) in old:
                     continue
