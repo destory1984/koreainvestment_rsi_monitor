@@ -639,6 +639,49 @@ class VoiceTest(unittest.TestCase):
             out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(3)]
         self.assertEqual(out, [1092, -1092, 32767])                           # 30000 이 끝에 닿는 1.09배에서 멈춘다
 
+    def test_split_parts(self):
+        self.assertEqual(al.split_parts("하이닉스 69 초과"), ["하이닉스", "육십구", "초과"])
+        self.assertEqual(al.split_parts("지 E 브이 30 미만"), ["지 E 브이", "삼십", "미만"])
+        self.assertEqual(al.split_parts("메타 매수 시그널"), ["메타", "매수 시그널"])
+        self.assertIsNone(al.split_parts("전하. 모니터링 시작하겠사옵니다."))
+        self.assertIsNone(al.split_parts("메타 37.5 미만"))                    # 소수 선 값은 통째 녹음으로
+        self.assertEqual([al.ko_num(n) for n in (5, 10, 15, 20, 37, 99)],
+                         ["오", "십", "십오", "이십", "삼십칠", "구십구"])
+        self.assertIsNone(al.ko_num(100))
+
+    def wav(self, values, rate=8000):
+        import io
+        import wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(b"".join(v.to_bytes(2, "little", signed=True) for v in values))
+        return buf.getvalue()
+
+    def test_joins_parts_when_all_recorded(self):
+        import wave
+        text = "메타 69 초과"
+        self.v.path(text, "local").write_bytes(b"whole")
+        self.v.part_path("메타").parent.mkdir()
+        self.v.part_path("메타").write_bytes(self.wav([1, 2]))
+        self.v.part_path("초과").write_bytes(self.wav([5]))
+        self.assertEqual(self.v.make(text).read_bytes(), b"whole")              # 숫자 조각이 없다 → 통째 녹음
+        self.v.part_path("육십구").write_bytes(self.wav([3, 4]))
+        self.assertTrue(self.v.cached("메타 69 미만") is False and self.v.cached(text))
+        with wave.open(str(self.v.make(text))) as w:
+            n = w.getnframes()
+            got = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(n)]
+        gap = [0] * int(al.TTS_PARTS_GAP * 8000)
+        self.assertEqual(got, [1, 2] + gap + [3, 4] + gap + [5])
+        self.v.prefer = "edge"                                                  # Edge 를 고르면 조각을 안 쓴다
+        self.v._edge_save = lambda text, tmp: tmp.write_bytes(b"mp3")
+        self.assertEqual(self.v.make(text).suffix, ".mp3")
+        self.v.prefer = "local"
+        self.v.part_path("초과").write_bytes(self.wav([5], rate=16000))          # 모양이 다르면 통째 녹음
+        self.assertEqual(self.v.make(text).read_bytes(), b"whole")
+
     def test_edge_fails_falls_back_to_local(self):
         self.v.prefer = "edge"
         self.v._edge_save = mock.Mock(side_effect=RuntimeError("인터넷 없음"))

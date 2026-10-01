@@ -46,6 +46,7 @@ TTS_LOCAL_TIMEOUT = 60        # 첫 문장은 모델이 깨느라 오래 걸릴 
 # 여기를 바꾸면 캐시 이름(path)이 바뀌어 그 문장을 다시 녹음한다.
 TTS_LOCAL_EMOTION = ()
 TTS_TRIM_LEVEL = 0.01         # 이보다 작은 소리는 빈 자리로 본다
+TTS_PARTS_GAP = 0.06          # 조각 녹음을 이어 붙일 때 조각 사이 쉼 (초)
 TTS_TRIM_KEEP = 0.06          # 잘라낸 뒤 앞뒤에 남길 초
 TTS_EDGE_VOICE = "ko-KR-SunHiNeural"
 TTS_EDGE_RATE = 20            # Edge 빠르기(%). +30 은 빨랐다
@@ -87,6 +88,25 @@ def spell(name, symb=""):
         return re.sub(r"[A-Za-z]", lambda m: _LETTER_KO[m.group().upper()], name)
     out = [_LETTER_KO.get(c.upper(), c) for c in name if c.isalnum()]
     return " ".join(out) or name
+
+
+def ko_num(n):
+    """1~99 를 한글로 (69 → '육십구'). 그 밖이면 None. 숫자만 따로 녹음하면 자릿수대로 읽을 때가 있어 글로 적어 보낸다."""
+    if not str(n).isdigit() or not 1 <= int(n) <= 99:
+        return None
+    d = "일이삼사오육칠팔구"
+    t, o = divmod(int(n), 10)
+    return ("" if t == 0 else ("" if t == 1 else d[t - 1]) + "십") + ("" if o == 0 else d[o - 1])
+
+
+def split_parts(text):
+    """알림 문장을 따로 녹음한 조각 이름들로. '하이닉스 69 초과' → ['하이닉스', '육십구', '초과'],
+    '메타 매수 시그널' → ['메타', '매수 시그널']. 그런 꼴이 아니면 None (인사, 소수 선 값)."""
+    m = re.fullmatch(r"(.+) (\d+) (초과|미만)", text)
+    if m and ko_num(m.group(2)):
+        return [m.group(1), ko_num(m.group(2)), m.group(3)]
+    m = re.fullmatch(r"(.+) (매수 시그널|매도 시그널)", text)
+    return [m.group(1), m.group(2)] if m else None
 
 
 def say_breach(name, symb, above, edge):
@@ -245,6 +265,27 @@ def _mci(cmd):
     return buf.value
 
 
+def join_wavs(paths, gap=0.0):
+    """wav 들을 gap 초씩 띄워 한 wav 로. 모양(16비트·채널·빠르기)이 서로 다르면 None."""
+    params, chunks = None, []
+    for p in paths:
+        with wave.open(str(p)) as w:
+            now = (w.getnchannels(), w.getsampwidth(), w.getframerate())
+            if now[1] != 2 or (params and now != params):
+                return None
+            params = now
+            if chunks:
+                chunks.append(b"\0" * (int(gap * now[2]) * now[0] * 2))
+            chunks.append(w.readframes(w.getnframes()))
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w2:
+        w2.setnchannels(params[0])
+        w2.setsampwidth(2)
+        w2.setframerate(params[2])
+        w2.writeframes(b"".join(chunks))
+    return out.getvalue()
+
+
 def louder(data, gain):
     """16비트 wav 의 소리를 gain 배로. 가장 큰 곳이 끝에 닿으면 거기서 멈춘다 (잘려 찌그러지지 않게,
     큰 문장은 gain 보다 덜 커진다). 못 하겠으면 받은 그대로."""
@@ -328,6 +369,29 @@ class Voice:
         key = hashlib.blake2b(f"{lang}|{sig}|{text}".encode("utf-8"), digest_size=8).hexdigest()
         return self.dir / f"{lang}_{key}.{ext}"
 
+    def part_path(self, piece):
+        """따로 녹음한 조각(종목 이름·숫자·'초과' 따위) 자리: 캐시/parts/<조각>.wav"""
+        return self.dir / "parts" / (re.sub(r'[\\/:*?"<>|]', "_", piece) + ".wav")
+
+    def part_paths(self, text):
+        """이 문장을 조각으로 이어 읽을 수 있으면 조각 파일들, 조각이 하나라도 없으면 None."""
+        parts = split_parts(text)
+        paths = [self.part_path(x) for x in parts or []]
+        return paths if paths and all(p.is_file() and p.stat().st_size > 0 for p in paths) else None
+
+    def joined(self, text):
+        """조각을 이어 붙인 wav (캐시/_joined.wav, 읽을 때마다 새로 쓴다). 못 하면 None."""
+        paths = self.part_paths(text)
+        try:
+            data = join_wavs(paths, TTS_PARTS_GAP) if paths else None
+        except Exception:
+            data = None
+        if not data:
+            return None
+        p = self.dir / "_joined.wav"
+        p.write_bytes(data)
+        return p
+
     def order(self, prefer=None):
         return ("edge", "local") if (prefer or self.prefer) == "edge" else ("local", "edge")
 
@@ -340,7 +404,10 @@ class Voice:
         return None
 
     def cached(self, text):
-        """고른 목소리(prefer)로 만들어 둔 것이 있나. Edge 를 골랐으면 Edge 파일만 센다 — 없으면 미리 만든다."""
+        """고른 목소리(prefer)로 만들어 둔 것이 있나. Edge 를 골랐으면 Edge 파일만 센다 — 없으면 미리 만든다.
+        조각이 다 있으면 이어 읽으니 있는 것으로 센다."""
+        if self.prefer != "edge" and self.part_paths(text):
+            return True
         return self.cached_path(text, only="edge" if self.prefer == "edge" else None) is not None
 
     @staticmethod
@@ -359,8 +426,13 @@ class Voice:
 
     def make(self, text, prefer=None):
         """캐시에 있으면 그것, 없으면 만들어 둔다. 기본은 로컬 → Edge. Edge 를 고르면 Edge 파일이 없을 때 먼저 만들어 보고,
-        안 되면 로컬 녹음을 쓴다."""
+        안 되면 로컬 녹음을 쓴다. 로컬이 먼저일 때 조각 녹음이 다 있으면 통째 녹음보다 그것을 이어 읽는다
+        (선 값을 바꿔도 새로 녹음할 것이 없다)."""
         order = self.order(prefer)
+        if order[0] == "local":
+            p = self.joined(text)
+            if p:
+                return p
         p = self.cached_path(text, only=order[0])
         if p:
             return p
