@@ -11,6 +11,7 @@ RSI 가 35/65, 30/70 을 넘으면 서버가 말로 알린다 (kis_alert.py). �
 """
 import argparse
 import asyncio
+import bisect
 import calendar
 import functools
 import json
@@ -43,7 +44,7 @@ AFTER = (15, 30, 60)   # 알림 뒤 이만큼 분 지나 가격이 알림 쪽으
 OPEN_QUIET = 120    # 장·세션이 바뀐 뒤 이만큼(초)은 알림(선·급등락·시그널)을 내지 않는다 (09-30 전하 1분, 10-01 2분)
 AFTER_SLACK = 10 * 60  # 그 시각 뒤 이만큼(초) 안에 시작한 봉이 없으면 장이 닫힌 것으로 본다
 HISTORY_DAYS = 5      # 켤 때 받은 분봉 앞에 DB(replay_cache/bars.db)에서 이어 붙일 날짜 수. 0 이면 안 붙인다
-MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5)으로만
+MTF = (1, 5, 15, 60)   # 한 줄에 나란히 보일 RSI 시간봉 (분). 알림·시그널은 주 분봉(기본 5, 종목마다 DEFAULT_NMIN)으로만
 SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regular": "미국 정규장",
                   "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
 # 세션마다 알림(소리)·시그널·텔레그램을 낼 RSI 선 [아래, 위] (강한 선은 5 바깥). 설정 "session_lines" 로 바꾼다.
@@ -51,6 +52,9 @@ SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regu
 # 빠르고 큰 움직임 알림: 종목 -> [분, %]. 그 분 동안 그 % 넘게 가면 「○○ 급등/급락」. 설정 "surge" 로 바꾼다.
 # USO 30분 1.5% 는 08-28~10-01 1분봉으로 하루 한 번쯤 (10-01 전하)
 DEFAULT_SURGE = {"USO": [30, 1.5]}
+# 주 분봉을 따로 두는 종목: 종목 -> 분. 그 종목은 RSI·차트·알림·시그널을 이 분봉으로 본다. 설정 "nmin" 으로 바꾼다.
+DEFAULT_NMIN = {"USO": 30}   # 10-01 전하
+FINE = 5   # 급등·급락과 「그 뒤」 결과는 주 분봉이 길어도 이 분봉으로 잰다
 GRID_KINDS = {"alert": "알림", "signal": "시그널", "telegram": "텔레그램"}
 DEFAULT_GRID = {sess: {kind: [30, 70] if sess == "day" and kind != "signal" else [35, 65] for kind in GRID_KINDS}
                 for sess in SOUND_SESSIONS}
@@ -86,6 +90,7 @@ class Hub:
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
         self.settings.setdefault("surge", DEFAULT_SURGE)
+        self.settings.setdefault("nmin", DEFAULT_NMIN)
         self.surge_at = {}        # 종목 -> 마지막 급등·급락 알림 시각 (그 분 동안은 다시 안 울린다)
         self.settings.setdefault("tts_engine", "local")  # 알림 목소리: "local"(로컬 TTS 녹음) / "edge"(Edge 음성)
         self.voice.prefer = self.settings["tts_engine"]
@@ -105,6 +110,20 @@ class Hub:
         self.approval_key = None
         self.day = k.us_day_session()   # 미국 주간거래 시간이면 해외 종목을 R 쪽으로 구독한다
         self.lock = asyncio.Lock()
+
+    def nmin_of(self, symb):
+        """그 종목의 주 분봉 (분). 설정 "nmin" 에 없으면 서버 기본."""
+        try:
+            return int(self.settings["nmin"].get(symb) or self.nmin)
+        except (TypeError, ValueError):
+            return self.nmin
+
+    def fine(self, symb):
+        """급등·급락과 「그 뒤」 결과를 잴 봉을 가진 Book. 주 분봉이 FINE 분보다 길면 나란히 받는 FINE 분봉
+        (아직 못 받았으면 None), 아니면 주 분봉."""
+        if self.nmin_of(symb) <= FINE:
+            return self.books.get(symb)
+        return self.tf.get(symb, {}).get(FINE)
 
     # ── 종목 목록 ─────────────────────────────────────────────
     def save(self):
@@ -152,11 +171,12 @@ class Hub:
         """분봉을 받는다 (블로킹). 미국 종목은 Webull 처럼 오버나이트 거래가 활발한 종목만 주간거래 봉을 넣는다.
         Webull 은 인기 종목만 24시간 거래를 해 주고 나머지는 애프터장까지만 그린다. 그 목록을 알 길이 없으니
         최근 오버나이트 5분 칸 절반 넘게 체결이 있었는지로 가른다. 틀리면 화면에서 바꾸고 설정에 남긴다."""
-        bars = k.fetch_bars(self.appkey, self.secret, excd, symb, self.nmin)
+        nmin = self.nmin_of(symb)
+        bars = k.fetch_bars(self.appkey, self.secret, excd, symb, nmin)
         if excd not in k.DAY_EXCD:
             self.store([(excd, symb, bars[:-1], True)])
             return self._history(excd, symb, bars, False) + bars, None
-        day, have, of = k.fetch_night(self.appkey, self.secret, excd, symb, self.nmin)
+        day, have, of = k.fetch_night(self.appkey, self.secret, excd, symb, nmin)
         auto = have > of * k.NIGHT_SHARE
         on = self.settings.get("night", {}).get(symb, auto)
         # 받은 것은 되감기 DB 에도 쌓는다 (마지막 봉은 아직 진행 중이라 뺀다). 주간거래 봉은 정규 쪽 봉을 덮지 않는다
@@ -173,7 +193,7 @@ class Hub:
         try:
             con = rp.db()
             try:
-                old = rp.get_bars(con, excd, symb, self.nmin, before=bars[0]["time_us"], days=HISTORY_DAYS)
+                old = rp.get_bars(con, excd, symb, self.nmin_of(symb), before=bars[0]["time_us"], days=HISTORY_DAYS)
             finally:
                 con.close()
         except Exception as e:
@@ -193,9 +213,9 @@ class Hub:
             con = rp.db()
             try:
                 for excd, symb, bars, replace in items:
-                    rp.put_bars(con, excd, symb, self.nmin, bars, replace=replace)
+                    rp.put_bars(con, excd, symb, self.nmin_of(symb), bars, replace=replace)
                 if night:
-                    rp.set_night(con, *night[:2], self.nmin, night[2])
+                    rp.set_night(con, *night[:2], self.nmin_of(night[1]), night[2])
                 con.commit()
             finally:
                 con.close()
@@ -214,7 +234,7 @@ class Hub:
         """주 분봉 말고 MTF 의 다른 시간봉들을 받는다 (블로킹). 오버나이트 봉은 주 분봉과 같은 결정을 따른다."""
         out = {}
         for tf in MTF:
-            if tf == self.nmin:
+            if tf == book.nmin:
                 continue
             try:
                 if book.excd == "KRX":   # 국내는 1분봉을 묶어 만드니 긴 봉은 조금만 받는다
@@ -272,7 +292,7 @@ class Hub:
         bars, night = self._bars(excd, symb)
         if not bars:
             raise ValueError(f"{symb}: 분봉이 없다.")
-        book = k.Book(excd, symb, bars, self.nmin)
+        book = k.Book(excd, symb, bars, self.nmin_of(symb))
         book.night = night
         if excd != "KRX":
             # 첫 체결이 올 때까지 등락 칸이 비지 않게 현재가를 한 번 묻는다 (주간거래 시간이면 주간거래 가격)
@@ -573,6 +593,7 @@ class Hub:
             why = getattr(g, "why", "시작 때부터")
             ev = {"ts": now.timestamp(), "d": now.strftime("%m-%d"), "t": now.strftime("%H:%M:%S"),
                   "bar": epoch(b.bars[-1]["time_us"]), "symb": s, "name": b.name,
+                  **self.at(s),
                   "rsi": v, "price": b.price, "start": a["start"], "zone": a["zone"], "strength": a["strength"],
                   "text": f"{_num(a['edge'])} {'초과' if a['zone'] == 'above' else '미만'}"
                           + (f" ({why})" if a["start"] else ""),
@@ -592,6 +613,17 @@ class Hub:
                                "full" if strong else "short")
             asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
 
+    def at(self, symb, t=None):
+        """주 분봉이 FINE 분보다 긴 종목의 알림에 붙일 {"at": 그때의 FINE 분봉 시각} — 「그 뒤」 결과를 여기서부터 잰다.
+        t(봉이 닫힌 뒤 나는 시그널의 그 봉 시각)를 주면 그 봉의 마지막 FINE 분 칸. 주 분봉이 FINE 분 이하면 빈 dict."""
+        nmin = self.nmin_of(symb)
+        if nmin <= FINE:
+            return {}
+        if t is not None:
+            return {"at": t + (nmin - FINE) * 60}
+        fine = self.fine(symb)
+        return {"at": epoch(fine.bars[-1]["time_us"])} if fine and fine.bars else {}
+
     def check_surge(self, symbs):
         """설정 "surge" 에 든 종목이 빠르게 많이 움직였으면 알린다 (소리·텔레그램·기록). 한 번 울리면 그 분 동안 쉰다.
         세션별 소리 끔은 따르지 않는다 — 주간거래 소리를 꺼 둬도 이것은 울린다. 종목 소리 끔·조용한 시각은 따른다."""
@@ -603,7 +635,10 @@ class Hub:
             now = datetime.now()
             if now.timestamp() - self.surge_at.get(s, 0) < minutes * 60:
                 continue
-            move = al.surge([(epoch(x["time_us"]), x["close"]) for x in b.bars[-(minutes // self.nmin + 8):]],
+            fine = self.fine(s)   # 주 분봉이 길면 5분봉으로 잰다 (아직 못 받았으면 건너뛴다)
+            if not fine:
+                continue
+            move = al.surge([(epoch(x["time_us"]), x["close"]) for x in fine.bars[-(minutes // fine.nmin + 8):]],
                             b.price, minutes, pct)
             if move is None:
                 continue
@@ -654,6 +689,7 @@ class Hub:
                 now = datetime.now()
                 ev = {"type": "signal", "ts": now.timestamp(), "d": now.strftime("%m-%d"),
                       "t": now.strftime("%H:%M:%S"), "bar": epoch(x.bar), "symb": s, "name": b.name,
+                      **self.at(s, epoch(x.bar)),
                       "rsi": x.rsi, "price": b.price,
                       "side": x.side, "zone": "above" if x.side == "buy" else "below",
                       "strength": "strong" if x.grade == "강" else "warn",
@@ -675,6 +711,7 @@ class Hub:
     def fill_after(self, symbs=None):
         """알림 뒤 15·30·60분 결과를 채운다. 말한 쪽으로 갔으면 +(%). 장이 닫혀 못 보면 None.
         들어간 값은 알림 때 가격, 나온 값은 알림 봉에서 그만큼 뒤에 시작한 봉의 종가(그 봉이 닫힌 뒤).
+        주 분봉이 긴 종목(설정 "nmin")은 5분봉으로 잰다 — 알림에 적어 둔 "at"(그때의 5분봉 시각)부터.
         셋 다 정해지면 알림 기록에 한 줄 더 적어 다시 켜도 남게 한다. 바뀐 알림들을 돌려준다."""
         changed = []
         for ev in self.events:
@@ -687,21 +724,27 @@ class Hub:
             after = ev.setdefault("after", {})
             if len(after) == len(AFTER):
                 continue
-            b = self.books.get(ev["symb"])
+            b = self.fine(ev["symb"])
             if not b or not b.bars:
                 continue
             times = [epoch(x["time_us"]) for x in b.bars]
-            try:
-                i0 = times.index(ev["bar"])
-            except ValueError:
-                continue   # 알림 봉이 받은 분봉 밖이다
+            start = ev.get("at", ev["bar"])
+            if "at" in ev:   # 그 5분 칸에 체결이 없었으면 바로 앞 봉
+                i0 = bisect.bisect_right(times, start) - 1
+                if i0 < 0:
+                    continue
+            else:
+                try:
+                    i0 = times.index(start)
+                except ValueError:
+                    continue   # 알림 봉이 받은 분봉 밖이다
             entry = ev.get("price") or b.bars[i0]["close"]
             up = ev["zone"] == "below" if ev.get("type") != "signal" else ev["side"] == "buy"
             before = dict(after)
             for h in AFTER:
                 if str(h) in after:
                     continue
-                target = ev["bar"] + h * 60
+                target = start + h * 60
                 j = next((j for j in range(i0 + 1, len(times)) if times[j] >= target), None)
                 if j is None or j == len(times) - 1 and times[j] <= target + AFTER_SLACK:
                     continue   # 아직 그 봉이 없거나 진행 중
@@ -807,6 +850,7 @@ class Hub:
         bar = b.bars[-1] if b.bars else None
         g = self.gates.get(b.symb, {}).get("alert")
         return {"symb": b.symb, "excd": b.excd, "name": b.name, "price": b.price, "rate": b.rate,
+                "nmin": b.nmin,
                 "time": b.us_time, "day": b.day_quote, "night": b.night, **ind,
                 "mute": b.symb in self.settings["mute"],
                 "mtf": self.mtf(b, ind["rsi"]),
@@ -823,7 +867,7 @@ class Hub:
         tf = self.tf.get(b.symb, {})
         out = {}
         for m in MTF:
-            if m == self.nmin:
+            if m == b.nmin:
                 out[m] = rsi_main
             elif m in tf:
                 out[m] = k.rsi_series([x["close"] for x in tf[m].bars[-400:]], self.period)[-1]

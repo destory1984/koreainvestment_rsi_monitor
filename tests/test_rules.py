@@ -379,6 +379,7 @@ class AfterTest(unittest.TestCase):
         h = w.Hub.__new__(w.Hub)
         h.books = {s: types.SimpleNamespace(bars=b) for s, b in books.items()}
         h.events = deque(events)
+        h.nmin, h.settings, h.tf = 5, {"nmin": {}}, {}
         return h
 
     def ev(self, **kw):
@@ -424,6 +425,18 @@ class AfterTest(unittest.TestCase):
         self.assertEqual(h.fill_after(), [])
         self.assertNotIn("after", h.events[0])
 
+    def test_long_main_bar_is_scored_on_five_minute_bars(self):
+        # 주 분봉이 30분인 종목: 알림에 적힌 "at"(그때의 5분봉)부터 5분봉으로 잰다
+        five = bars_from([100 + i for i in range(20)])
+        h = self.hub({"A": bars_from([100, 106, 112])}, [self.ev(at=self.bar0 + 600, price=102.0)])
+        h.settings["nmin"] = {"A": 30}
+        self.assertEqual(h.fill_after(), [])                    # 5분봉을 아직 못 받았다
+        h.tf = {"A": {5: types.SimpleNamespace(bars=five)}}
+        h.fill_after()
+        self.assertEqual(h.events[0]["after"], {"15": 2.941, "30": 5.882, "60": 11.765})
+        self.assertEqual(h.at("A", self.bar0), {"at": self.bar0 + 1500})   # 닫힌 30분봉의 마지막 5분 칸
+        self.assertEqual(h.at("B"), {})
+
     def test_scores(self):
         rows = [self.ev(), self.ev(ts=2.0), self.ev(ts=3.0, suppressed="쿨다운"), self.ev(ts=4.0, start=True),
                 self.ev(ts=5.0, type="signal", side="sell", strength="warn", text="매도 시그널 (약, 역추세)"),
@@ -463,7 +476,7 @@ class StoreTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.h = w.Hub.__new__(w.Hub)
-        self.h.nmin = 5
+        self.h.nmin, self.h.settings = 5, {"nmin": {}}
 
     def test_api_bars_replace_live_bars_do_not(self):
         api = bars_from([100, 101, 102])

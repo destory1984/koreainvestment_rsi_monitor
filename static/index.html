@@ -307,7 +307,7 @@ function ago(ts) {
 // 미국 종목의 RSI 에 오버나이트(주간거래) 봉을 넣었는지. Webull 은 24시간 거래 종목만 넣는다
 function nightText(r) {
   const n = r.night;
-  const why = `지난 오버나이트 5분 칸 ${n.of}개 중 ${n.have}개에 체결이 있어`;
+  const why = `지난 오버나이트 ${r.nmin || cfg.nmin}분 칸 ${n.of}개 중 ${n.have}개에 체결이 있어`;
   const how = n.on === n.auto ? `${why} Webull 24시간 거래 종목${n.on ? "으로" : "이 아닌 것으로"} 봤다`
                               : `손으로 바꿨다 (저절로라면 ${n.auto ? "넣는다" : "뺀다"}. ${why})`;
   return (n.on ? "RSI·차트에 오버나이트 봉을 넣는다" : "RSI·차트에서 오버나이트 봉을 뺐다 (애프터장까지)") + ` — ${how}.`;
@@ -358,7 +358,10 @@ function mtfCell(r) {
 function zoneCell(r) {
   const [zone, strength] = r.zone || ["neutral", ""], ln = linesOf(r);
   // 지금 세션 선이 기본(35/65)과 다르면 선을 보인다. 선은 「⚙ 설정」의 세션별 RSI 선 표에서 바꾼다
-  const tag = customLines(r) ? `<span class="tag manual">${ln.lower}/${ln.upper}</span>` : "";
+  // 주 분봉이 다른 종목(서버 설정 "nmin")은 몇 분봉으로 보는지도
+  const tag = (r.nmin && r.nmin !== cfg.nmin ? `<span class="tag manual" title="이 종목은 RSI·차트·알림·시그널을 ` +
+               `${r.nmin}분봉으로 본다">${r.nmin}분</span>` : "") +
+              (customLines(r) ? `<span class="tag manual">${ln.lower}/${ln.upper}</span>` : "");
   const open = `<span class="zcell" title="지금 세션 알림 선 ${ln.strong_lower}·${ln.lower}·${ln.upper}·${ln.strong_upper}. ` +
                `「⚙ 설정」의 세션별 RSI 선에서 바꾼다">`;
   if (zone === "neutral") return open + tag + `<span class="dim">밴드 안${r.rearm ? " · 재무장 대기" : ""}</span></span>`;
@@ -591,7 +594,7 @@ async function select(symb) {
   selected = symb;
   document.querySelectorAll("tbody tr").forEach(tr => tr.classList.toggle("sel", tr.id === "r-" + symb));
   const r = rows[symb];
-  $("#ctitle").textContent = `${r && r.excd === "KRX" ? r.name : symb} · ${cfg.nmin}분봉`;
+  $("#ctitle").textContent = `${r && r.excd === "KRX" ? r.name : symb} · ${(r && r.nmin) || cfg.nmin}분봉`;
   const res = await fetch("/api/chart/" + symb);
   if (!res.ok || selected !== symb) return;
   const d = await res.json();
@@ -713,7 +716,7 @@ async function loadScores() {
     d.rows.map(r => `<tr><td>${esc(r.kind)}</td>` +
       hs.map(h => { const x = r[h]; return `<td>${x.n}</td><td>${pct(x.hit)}</td><td>${avg(x.avg)}</td>`; }).join("") +
       "</tr>").join("") + "</tbody></table>" +
-    '<div class="note">알림 때 가격에서 그만큼 뒤 5분봉 종가까지. 알림이 말한 쪽(미만·매수는 오름, 초과·매도는 내림)으로 가면 +. ' +
+    '<div class="note">알림 때 가격에서 그만큼 뒤 5분봉 종가까지 (주 분봉이 긴 종목도 5분봉으로). 알림이 말한 쪽(미만·매수는 오름, 초과·매도는 내림)으로 가면 +. ' +
     '맞음은 보합을 뺀 비율. 억제된 것과 켤 때 이미 넘어 있던 것은 뺐다.</div>';
 }
 $("#scorebtn").onclick = () => {
