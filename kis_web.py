@@ -48,6 +48,9 @@ SOUND_SESSIONS = {"day": "미국 주간거래", "pre": "미국 프리장", "regu
                   "after": "미국 애프터", "kr": "국내 종목"}   # 소리를 따로 켜고 끄는 때
 # 세션마다 알림(소리)·시그널·텔레그램을 낼 RSI 선 [아래, 위] (강한 선은 5 바깥). 설정 "session_lines" 로 바꾼다.
 # 미국 주간거래 알림·텔레그램은 35/65 가 너무 잦아 30/70 (09-28 전하)
+# 빠르고 큰 움직임 알림: 종목 -> [분, %]. 그 분 동안 그 % 넘게 가면 「○○ 급등/급락」. 설정 "surge" 로 바꾼다.
+# USO 30분 1.5% 는 08-28~10-01 1분봉으로 하루 한 번쯤 (10-01 전하)
+DEFAULT_SURGE = {"USO": [30, 1.5]}
 GRID_KINDS = {"alert": "알림", "signal": "시그널", "telegram": "텔레그램"}
 DEFAULT_GRID = {sess: {kind: [30, 70] if sess == "day" and kind != "signal" else [35, 65] for kind in GRID_KINDS}
                 for sess in SOUND_SESSIONS}
@@ -82,6 +85,8 @@ class Hub:
         self.settings.pop("lines", None)
         self.settings.setdefault("mute", [])   # 소리를 끈 종목들 (기록은 쌓인다)
         self.settings.setdefault("telegram", True)   # 텔레그램으로도 보낼지 (토큰·대화방이 있어야)
+        self.settings.setdefault("surge", DEFAULT_SURGE)
+        self.surge_at = {}        # 종목 -> 마지막 급등·급락 알림 시각 (그 분 동안은 다시 안 울린다)
         self.settings.setdefault("tts_engine", "local")  # 알림 목소리: "local"(로컬 TTS 녹음) / "edge"(Edge 음성)
         self.voice.prefer = self.settings["tts_engine"]
         self.settings.setdefault("tts_gain", 1.0)   # 목소리만 몇 배로 키울지 (녹음이 작아서)
@@ -519,7 +524,7 @@ class Hub:
     def last_alert(self, symb):
         """그 종목에서 마지막으로 실제로 울린 선 알림 (억제된 것과 시그널은 빼고)."""
         return next((e for e in self.events if e["symb"] == symb and not e["suppressed"]
-                     and e.get("type") != "signal"), None)
+                     and e.get("type") not in ("signal", "surge")), None)
 
     def market_closed(self, book):
         """그 종목 시장이 하루 쉬는 때 (주말·휴일, 장 마감은 아님). 화면의 「휴장」과 같다.
@@ -587,6 +592,39 @@ class Hub:
                                "full" if strong else "short")
             asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
 
+    def check_surge(self, symbs):
+        """설정 "surge" 에 든 종목이 빠르게 많이 움직였으면 알린다 (소리·텔레그램·기록). 한 번 울리면 그 분 동안 쉰다.
+        세션별 소리 끔은 따르지 않는다 — 주간거래 소리를 꺼 둬도 이것은 울린다. 종목 소리 끔·조용한 시각은 따른다."""
+        for s in symbs:
+            rule, b = self.settings["surge"].get(s), self.books.get(s)
+            if not rule or not b or self.market_closed(b) or k.just_opened(b.excd == "KRX", OPEN_QUIET):
+                continue
+            minutes, pct = rule
+            now = datetime.now()
+            if now.timestamp() - self.surge_at.get(s, 0) < minutes * 60:
+                continue
+            move = al.surge([(epoch(x["time_us"]), x["close"]) for x in b.bars[-(minutes // self.nmin + 8):]],
+                            b.price, minutes, pct)
+            if move is None:
+                continue
+            self.surge_at[s] = now.timestamp()
+            up = move > 0
+            ev = {"type": "surge", "ts": now.timestamp(), "d": now.strftime("%m-%d"), "t": now.strftime("%H:%M:%S"),
+                  "bar": epoch(b.bars[-1]["time_us"]), "symb": s, "name": b.name,
+                  "rsi": b.indicators(self.period)["rsi"] or 0.0, "price": b.price, "start": False,
+                  "zone": "above" if up else "below", "strength": "strong",
+                  "text": f"{'급등' if up else '급락'} {move:+.1f}% ({minutes}분)",
+                  "suppressed": "", "muted": self.muted(b, session=False)}
+            self.events.appendleft(ev)
+            with ALERT_LOG.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            print(f"{ev['t']} 알림 {b.name} {ev['text']}", flush=True)
+            if self.settings["telegram"]:
+                self.tg.send(tg.alert_text(b.name, b.excd, ev), silent=bool(ev["muted"]))
+            if self.settings["sound"] and not ev["muted"]:
+                self.voice.say(al.say_surge(b.name, s, up), "full")
+            asyncio.get_event_loop().create_task(self.broadcast({"type": "alert", "event": ev}))
+
     def check_telegram(self, b, v):
         """텔레그램 칸 선으로 따로 넘음을 센다. 소리 알림과 따로 움직인다.
         억제된 것과 켤 때(선이 바뀔 때) 이미 넘어 있던 것은 안 보낸다. 소리를 가린 때는 알림음 없이."""
@@ -642,6 +680,8 @@ class Hub:
                 continue
             if ev.get("suppressed") or ev.get("start") or "(시작 때부터)" in ev.get("text", ""):
                 continue
+            if ev.get("type") == "surge":   # 급등·급락은 어느 쪽으로 간다는 알림이 아니라 채점하지 않는다
+                continue
             after = ev.setdefault("after", {})
             if len(after) == len(AFTER):
                 continue
@@ -683,8 +723,8 @@ class Hub:
         return {"side": x.side, "word": x.word, "grade": x.grade, "trend": x.trend,
                 "bar": epoch(x.bar)}
 
-    def muted(self, book):
-        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열."""
+    def muted(self, book, session=True):
+        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열. session 이 False 면 세션별 소리 끔은 안 본다."""
         if book.symb in self.settings["mute"]:
             return "종목 소리 끔"
         q = self.settings["quiet"]
@@ -693,7 +733,7 @@ class Hub:
             if (a <= now < b) if a <= b else (now >= a or now < b):
                 return f"조용한 시각 {a}~{b}"
         key = "kr" if book.excd == "KRX" else k.us_session()
-        if key and not self.settings["sound_sessions"].get(key, True):
+        if session and key and not self.settings["sound_sessions"].get(key, True):
             return f"{SOUND_SESSIONS[key]} 소리 끔"
         return ""
 
@@ -845,6 +885,7 @@ class Hub:
             dirty, self.dirty = self.dirty, set()
             closed, self.closed = self.closed, set()
             self.check_alerts(dirty)
+            self.check_surge(dirty)
             self.check_signals(closed)
             if closed:
                 await self.push_after(self.fill_after(closed))

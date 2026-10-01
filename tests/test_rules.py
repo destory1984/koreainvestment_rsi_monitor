@@ -548,6 +548,37 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class SurgeTest(unittest.TestCase):
+    def bars(self, closes, step=300):
+        return [(i * step, c) for i, c in enumerate(closes)]
+
+    def test_fast_big_move(self):
+        flat = [100.0] * 8
+        self.assertIsNone(al.surge(self.bars(flat), 100.5, 30, 1.5))                    # 조금 움직임
+        up = self.bars([100, 100, 100.3, 100.6, 100.9, 1.012 * 100, 101.3, 101.3])
+        self.assertAlmostEqual(al.surge(up, 101.7, 30, 1.5), 1.7, places=3)             # 30분 전 종가 100 에서 +1.7%
+        self.assertAlmostEqual(al.surge(self.bars([100, 100, 99.5, 99, 98.9, 98.8, 98.7, 98.7]), 98.3, 30, 1.5),
+                               -1.7, places=3)
+        self.assertIsNone(al.surge(up, None, 30, 1.5))
+
+    def test_one_bar_spike_is_ignored(self):
+        # 두 가격이 번갈아 찍힌다 (USO 09-29 주간거래 144 ↔ 152): 앞 봉은 제자리라 안 울린다
+        flip = self.bars([144, 152, 144, 152, 144, 152, 144, 144, 152])
+        self.assertIsNone(al.surge(flip, 152.0, 30, 1.5))
+        self.assertIsNone(al.surge(flip[:-1], 144.0, 30, 1.5))
+
+    def test_gap_in_bars(self):
+        # 기준 봉이 30분보다 10분 넘게 더 옛것이면(장이 쉬었다) 보지 않는다
+        gap = [(0, 100.0), (300, 100.0), (3000, 103.0), (3300, 103.0), (3600, 103.0)]
+        self.assertIsNone(al.surge(gap, 103.5, 30, 1.5))
+        thin = [(0, 100.0), (300, 100.0), (600, 100.0), (1500, 101.2), (2100, 101.4), (2400, 101.4)]   # 봉이 드문드문
+        self.assertAlmostEqual(al.surge(thin, 101.6, 30, 1.5), 1.6, places=3)
+
+    def test_say(self):
+        self.assertEqual(al.say_surge("USO", "USO", True), "유 에스 오 급등")
+        self.assertEqual(al.split_parts("유 에스 오 급락"), ["유 에스 오", "급락"])
+
+
 # ── 국내 분봉은 KRX 정규장만 ────────────────────────────────────
 class KrBarsTest(unittest.TestCase):
     def test_drops_nextrade_minutes(self):

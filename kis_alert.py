@@ -101,11 +101,11 @@ def ko_num(n):
 
 def split_parts(text):
     """알림 문장을 따로 녹음한 조각 이름들로. '하이닉스 69 초과' → ['하이닉스', '육십구', '초과'],
-    '메타 매수 시그널' → ['메타', '매수 시그널']. 그런 꼴이 아니면 None (인사, 소수 선 값)."""
+    '메타 매수 시그널' → ['메타', '매수 시그널'], '유 에스 오 급등' → ['유 에스 오', '급등']. 그런 꼴이 아니면 None (인사, 소수 선 값)."""
     m = re.fullmatch(r"(.+) (\d+) (초과|미만)", text)
     if m and ko_num(m.group(2)):
         return [m.group(1), ko_num(m.group(2)), m.group(3)]
-    m = re.fullmatch(r"(.+) (매수 시그널|매도 시그널)", text)
+    m = re.fullmatch(r"(.+) (매수 시그널|매도 시그널|급등|급락)", text)
     return [m.group(1), m.group(2)] if m else None
 
 
@@ -115,6 +115,33 @@ def say_breach(name, symb, above, edge):
 
 def say_signal(name, symb, side):
     return f"{spell(name, symb)} {'매수' if side == 'buy' else '매도'} 시그널"
+
+
+def say_surge(name, symb, up):
+    return f"{spell(name, symb)} {'급등' if up else '급락'}"
+
+
+def surge(bars, price, minutes, pct, slack=10):
+    """빠르고 큰 움직임: 지금 가격이 minutes 분 전 종가에서 pct % 넘게 갔으면 그 변화율(%), 아니면 None.
+    bars 는 [(시작 시각 초, 종가), ...] 로 마지막이 진행 중인 봉. 기준은 진행 중인 봉보다 minutes 분 넘게 앞서 시작한
+    마지막 봉의 종가 — 그 봉이 slack 분 넘게 더 옛것이면(장이 쉬었다) 보지 않는다.
+    한 봉만 튄 것은 버린다 — 주간거래 때 두 가격이 번갈아 찍히는 일이 있다 (USO 09-29, 144 ↔ 152)."""
+    if len(bars) < 4 or not price:
+        return None
+    now = bars[-1][0]
+    i = next((i for i in range(len(bars) - 2, -1, -1) if bars[i][0] <= now - minutes * 60), None)
+    if not i or i >= len(bars) - 2 or bars[i][0] < now - (minutes + slack) * 60:
+        return None
+    (ref, older), before = (bars[i][1], bars[i - 1][1]), bars[-2][1]
+    if not ref or not older:
+        return None
+    move = (price / ref - 1) * 100
+    # 기준 봉 하나, 지금 봉 하나만 튄 것이 아니어야 한다: 기준 앞 봉에서 재도, 앞 봉 종가로 재도 같은 쪽으로 0.7배는 가 있다
+    for a, b in ((price, older), (before, ref)):
+        other = (a / b - 1) * 100
+        if move * other <= 0 or abs(other) < pct * 0.7:
+            return None
+    return move if abs(move) >= pct else None
 
 
 def phrases(name, symb, lines=None):
