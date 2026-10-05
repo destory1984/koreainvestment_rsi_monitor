@@ -749,13 +749,19 @@ class VoiceTest(unittest.TestCase):
     def test_joins_parts_when_all_recorded(self):
         import wave
         text = "메타 69 초과"
-        self.v.path(text, "local").write_bytes(b"whole")
         self.v.part_path("메타").parent.mkdir()
         self.v.part_path("메타").write_bytes(self.wav([1, 2]))
         self.v.part_path("초과").write_bytes(self.wav([5]))
-        self.assertEqual(self.v.make(text).read_bytes(), b"whole")              # 숫자 조각이 없다 → 통째 녹음
         self.v.part_path("육십구").write_bytes(self.wav([3, 4]))
         self.assertTrue(self.v.cached("메타 69 미만") is False and self.v.cached(text))
+        whole = self.v.path(text, "local")
+        whole.write_bytes(b"whole")
+        self.assertEqual(self.v.make(text).read_bytes(), b"whole")              # 통째 녹음이 있으면 그것 먼저
+        whole.unlink()
+        self.v.speaker = "Other"                                                # 다른 목소리의 조각은 안 쓴다
+        self.assertFalse(self.v.cached(text))
+        self.assertNotEqual(self.v.path(text, "local"), whole)
+        self.v.speaker = al.TTS_LOCAL_SPEAKER
         with wave.open(str(self.v.make(text))) as w:
             n = w.getnframes()
             got = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(n)]
@@ -765,8 +771,8 @@ class VoiceTest(unittest.TestCase):
         self.v._edge_save = lambda text, tmp: tmp.write_bytes(b"mp3")
         self.assertEqual(self.v.make(text).suffix, ".mp3")
         self.v.prefer = "local"
-        self.v.part_path("초과").write_bytes(self.wav([5], rate=16000))          # 모양이 다르면 통째 녹음
-        self.assertEqual(self.v.make(text).read_bytes(), b"whole")
+        self.v.part_path("초과").write_bytes(self.wav([5], rate=16000))          # 모양이 다르면 못 잇는다
+        self.assertIsNone(self.v.joined(text))
 
     def test_edge_fails_falls_back_to_local(self):
         self.v.prefer = "edge"

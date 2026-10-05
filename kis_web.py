@@ -95,6 +95,9 @@ class Hub:
         self.surge_at = {}        # 종목 -> 마지막 급등·급락 알림 시각 (그 분 동안은 다시 안 울린다)
         self.settings.setdefault("tts_engine", "local")  # 알림 목소리: "local"(로컬 TTS 녹음) / "edge"(Edge 음성)
         self.voice.prefer = self.settings["tts_engine"]
+        # 로컬 TTS 목소리 이름. 목소리마다 녹음이 따로 쌓이니, 바꾸면 그 목소리로 녹음해 둔 것을 튼다
+        self.settings.setdefault("tts_speaker", al.TTS_LOCAL_SPEAKER)
+        self.voice.speaker = str(self.settings["tts_speaker"] or al.TTS_LOCAL_SPEAKER)
         self.settings.setdefault("tts_gain", 1.0)   # 목소리만 몇 배로 키울지 (녹음이 작아서)
         self.voice.gain = float(self.settings["tts_gain"])
         self.settings.setdefault("kr_market", "krx")  # 국내: "krx"(정규장) / "unified"(넥스트레이드 포함 08:00~20:00)

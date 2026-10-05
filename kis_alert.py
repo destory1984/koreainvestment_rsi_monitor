@@ -396,12 +396,14 @@ class Voice:
         self.last_error = ""
         self.gain = 1.0           # 목소리만 키우는 배수 (말머리 소리는 그대로)
         self.prefer = "local"     # 알림을 읽을 목소리: "local"(로컬 TTS 녹음 먼저) / "edge"(Edge 먼저, 없으면 만든다)
+        # 로컬 TTS 목소리 이름 (설정 "tts_speaker"). 캐시 이름에 들어가 목소리마다 녹음이 따로 쌓인다
+        self.speaker = TTS_LOCAL_SPEAKER
         threading.Thread(target=self._worker, daemon=True).start()
 
     # 캐시 — rsi_monitor.tts_path 와 같은 열쇠
     def path(self, text, engine="local", lang="ko"):
         if engine == "local":
-            sig = f"local|{TTS_LOCAL_SPEAKER}|{TTS_LOCAL_SEED}|{_instruct(text)}"
+            sig = f"local|{self.speaker}|{TTS_LOCAL_SEED}|{_instruct(text)}"
             sig += f"|trim{TTS_TRIM_LEVEL}:{TTS_TRIM_KEEP}"
             ext = "wav"
         else:
@@ -410,8 +412,10 @@ class Voice:
         return self.dir / f"{lang}_{key}.{ext}"
 
     def part_path(self, piece):
-        """따로 녹음한 조각(종목 이름·숫자·'초과' 따위) 자리: 캐시/parts/<조각>.wav"""
-        return self.dir / "parts" / (re.sub(r'[\\/:*?"<>|]', "_", piece) + ".wav")
+        """따로 녹음한 조각(종목 이름·숫자·'초과' 따위) 자리: 캐시/parts/<조각>.wav.
+        목소리를 바꿨으면 캐시/parts_<목소리>/ — 다른 목소리의 조각을 섞어 읽지 않게 따로 둔다."""
+        folder = "parts" if self.speaker == TTS_LOCAL_SPEAKER else "parts_" + re.sub(r"\W", "_", self.speaker.lower())
+        return self.dir / folder / (re.sub(r'[\\/:*?"<>|]', "_", piece) + ".wav")
 
     def part_paths(self, text):
         """이 문장을 조각으로 이어 읽을 수 있으면 조각 파일들, 조각이 하나라도 없으면 None."""
@@ -466,16 +470,15 @@ class Voice:
 
     def make(self, text, prefer=None):
         """캐시에 있으면 그것, 없으면 만들어 둔다. 기본은 로컬 → Edge. Edge 를 고르면 Edge 파일이 없을 때 먼저 만들어 보고,
-        안 되면 로컬 녹음을 쓴다. 로컬이 먼저일 때 조각 녹음이 다 있으면 통째 녹음보다 그것을 이어 읽는다
-        (선 값을 바꿔도 새로 녹음할 것이 없다)."""
+        안 되면 로컬 녹음을 쓴다. 로컬이 먼저일 때 통째 녹음이 없고 조각 녹음이 다 있으면 그것을 이어 읽는다."""
         order = self.order(prefer)
+        p = self.cached_path(text, only=order[0])
+        if p:
+            return p
         if order[0] == "local":
             p = self.joined(text)
             if p:
                 return p
-        p = self.cached_path(text, only=order[0])
-        if p:
-            return p
         if order[0] == "edge":
             try:
                 return self._save(text, "edge")
@@ -516,7 +519,7 @@ class Voice:
         asyncio.run(c.save(str(tmp)))
 
     def _local_save(self, text, tmp):
-        body = {"text": text, "speaker": TTS_LOCAL_SPEAKER, "seed": TTS_LOCAL_SEED,
+        body = {"text": text, "speaker": self.speaker, "seed": TTS_LOCAL_SEED,
                 "instruct": _instruct(text)}
         req = urllib.request.Request(TTS_LOCAL_URL, data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json"})
