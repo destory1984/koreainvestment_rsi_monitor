@@ -545,6 +545,48 @@ class SessionTest(unittest.TestCase):
             now = datetime.strptime("2026-09-28 " + t, "%Y-%m-%d %H:%M:%S")
             self.assertEqual(k.just_opened(True, 60, now), want, t)
 
+    def bells(self, start, hours):
+        """start 부터 hours 시간을 1분씩 걸으며 울린 종 [(동부 시각, 종류)]."""
+        t, out = self.at(start), []
+        last = k.us_session(t)
+        for _ in range(hours * 60):
+            t += timedelta(minutes=1)
+            now = k.us_session(t)
+            kind, last = k.us_bell(last, now), now
+            if kind:
+                out.append((t.strftime("%m-%d %H:%M"), kind))
+        return out
+
+    def test_us_bell(self):
+        # 여느 날: 프리 04:00, 정규 09:30, 종료 16:00. 애프터·주간거래가 열릴 때는 종이 없다
+        self.assertEqual(self.bells("2026-09-08 00:00", 24),
+                         [("09-08 04:00", "pre"), ("09-08 09:30", "open"), ("09-08 16:00", "close")])
+        # 금요일 밤 → 월요일 아침: 주말에는 없고 월요일 프리장부터
+        self.assertEqual(self.bells("2026-09-11 17:00", 72)[:1], [("09-14 04:00", "pre")])
+        self.assertEqual(self.bells("2026-09-12 00:00", 48), [])
+        self.assertEqual(self.bells("2026-09-07 00:00", 24), [])              # 노동절
+        # 조기 폐장 날은 13:00 에 종료
+        self.assertEqual(self.bells("2026-11-27 00:00", 24)[-1], ("11-27 13:00", "close"))
+        # 켤 때 이미 열려 있던 세션은 알리지 않는다
+        self.assertIsNone(k.us_bell("regular", "regular"))
+
+    def test_ring_bell(self):
+        h = w.Hub.__new__(w.Hub)
+        h.settings = {"sound": True, "quiet": {"on": False, "from": "00:00", "to": "07:00"},
+                      "bells": {"pre": "프리", "open": "", "close": "종료"}}
+        h.voice = mock.Mock()
+        with mock.patch("builtins.print"):
+            self.assertEqual(h.ring_bell("pre"), "프리")
+            h.voice.say.assert_called_once_with("프리", prefer="local")
+            self.assertEqual(h.ring_bell("open"), "")                         # 글을 비우면 그 종은 없다
+            h.settings["sound"] = False
+            self.assertEqual(h.ring_bell("close"), "")
+            h.settings.update(sound=True, quiet={"on": True, "from": "00:00", "to": "23:59"})
+            FakeNow.fixed = datetime(2026, 9, 25, 5, 0)
+            with mock.patch.object(w, "datetime", FakeNow):
+                self.assertEqual(h.ring_bell("close"), "")
+        self.assertEqual(h.voice.say.call_count, 1)
+
     def test_kr_holidays_cached_once_a_day(self):
         page = {"rt_cd": "0", "output": [
             {"bass_dt": "20260925", "opnd_yn": "N"}, {"bass_dt": "20260928", "opnd_yn": "Y"},

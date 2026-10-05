@@ -80,7 +80,8 @@ class Hub:
         for key in SOUND_SESSIONS:
             self.settings["sound_sessions"].setdefault(key, True)
         self.settings.setdefault("quiet", {"on": False, "from": "00:00", "to": "07:00"})
-        grid = self.settings.setdefault("session_lines", {})
+        self.settings.setdefault("bells", dict(al.TTS_BELLS))   # 미국 프리장 시작·정규장 시작·종료에 읽는 말
+        grid =self.settings.setdefault("session_lines", {})
         for sess, kinds in DEFAULT_GRID.items():
             for kind, v in kinds.items():
                 grid.setdefault(sess, {}).setdefault(kind, list(v))
@@ -156,6 +157,7 @@ class Hub:
     def prefetch(self, books):
         # 인사는 늘 녹음해 둔 목소리로 읽으니 Edge 를 골랐어도 Edge 로 만들지 않는다
         texts = [t for t in self.greetings() if t] if self.voice.prefer == "local" else []
+        texts += [t for t in self.settings["bells"].values() if t] if self.voice.prefer == "local" else []
         alert_lines = {self.grid_lines(sess, "alert") for sess in SOUND_SESSIONS}
         for b in books:
             for ln in alert_lines:
@@ -420,6 +422,28 @@ class Hub:
                     except Exception:
                         pass   # 끊겼으면 다시 붙을 때 새 키로 건다
             print("미국 " + ("주간거래로 바꿔 받는다" if day else "정규장·프리·애프터로 바꿔 받는다"), flush=True)
+
+    def ring_bell(self, kind):
+        """미국 프리장 시작("pre")·정규장 시작("open")·정규장 종료("close")를 말로 알린다. 읽었으면 그 글, 아니면 "".
+        소리를 껐거나 조용한 시각이면 안 읽는다. 세션별 소리 끔은 따르지 않는다. 인사처럼 녹음해 둔 목소리로."""
+        text = self.settings["bells"].get(kind, "")
+        why = "" if text else "글 없음"
+        why = why or ("" if self.settings["sound"] else "소리 끔") or self.quiet_now()
+        print(f"미국 장 종 {kind} — " + (why or text), flush=True)
+        if why:
+            return ""
+        self.voice.say(text, prefer="local")
+        return text
+
+    async def bell_loop(self):
+        """미국 세션이 바뀌는 때를 1초마다 보고 종을 울린다. 켤 때 이미 열려 있던 세션은 알리지 않는다."""
+        last = k.us_session()
+        while True:
+            await asyncio.sleep(1)
+            now = k.us_session()
+            kind, last = k.us_bell(last, now), now
+            if kind:
+                self.ring_bell(kind)
 
     # ── 지수 띠 ───────────────────────────────────────────────
     def fetch_markets(self):
@@ -768,16 +792,23 @@ class Hub:
         return {"side": x.side, "word": x.word, "grade": x.grade, "trend": x.trend,
                 "bar": epoch(x.bar)}
 
-    def muted(self, book, session=True):
-        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열. session 이 False 면 세션별 소리 끔은 안 본다."""
-        if book.symb in self.settings["mute"]:
-            return "종목 소리 끔"
+    def quiet_now(self):
+        """지금이 조용한 시각이면 그 까닭, 아니면 빈 문자열."""
         q = self.settings["quiet"]
         if q["on"]:
             now, a, b = datetime.now().strftime("%H:%M"), q["from"], q["to"]
             if (a <= now < b) if a <= b else (now >= a or now < b):
                 return f"조용한 시각 {a}~{b}"
-        key = "kr" if book.excd == "KRX" else k.us_session()
+        return ""
+
+    def muted(self, book, session=True):
+        """이 종목 알림의 소리를 가릴 까닭. 울려도 되면 빈 문자열. session 이 False 면 세션별 소리 끔은 안 본다."""
+        if book.symb in self.settings["mute"]:
+            return "종목 소리 끔"
+        quiet = self.quiet_now()
+        if quiet:
+            return quiet
+        key ="kr" if book.excd == "KRX" else k.us_session()
         if session and key and not self.settings["sound_sessions"].get(key, True):
             return f"{SOUND_SESSIONS[key]} 소리 끔"
         return ""
@@ -966,7 +997,8 @@ hub: Hub = None
 async def lifespan(app):
     await asyncio.to_thread(hub.load)
     tasks = [asyncio.create_task(hub.kis_loop()), asyncio.create_task(hub.push_loop()),
-             asyncio.create_task(hub.markets_loop()), asyncio.create_task(hub.session_loop())]
+             asyncio.create_task(hub.markets_loop()), asyncio.create_task(hub.session_loop()),
+             asyncio.create_task(hub.bell_loop())]
     yield
     for t in tasks:
         t.cancel()

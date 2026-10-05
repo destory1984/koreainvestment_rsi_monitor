@@ -473,6 +473,18 @@ def just_opened(krx, secs=60, now=None):
     return sess is not None and us_session(t - timedelta(seconds=secs)) != sess
 
 
+def us_bell(prev, now):
+    """미국 세션이 prev 에서 now 로 바뀔 때 알릴 종: "pre"(프리장 시작) / "open"(정규장 시작) / "close"(정규장 종료) / None.
+    prev·now 는 us_session 값. 쉬는 날은 세션이 None 그대로라 종이 없고, 조기 폐장 날은 13:00 에 "close"."""
+    if prev == now:
+        return None
+    if now == "pre":
+        return "pre"
+    if now == "regular":
+        return "open"
+    return "close" if prev == "regular" else None
+
+
 def kr_holidays(appkey, secret):
     """오늘부터 24일쯤 국내 장이 쉬는 날들 ['YYYY-MM-DD', ...] (국내휴장일조회 CTCA0903R).
     한국투자증권이 하루 한 번쯤만 부르라고 해서 kis_holidays.json 에 그날 받은 것을 둔다."""

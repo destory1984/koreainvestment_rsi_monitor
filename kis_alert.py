@@ -57,6 +57,9 @@ TTS_VOLUME = 0                # Edge 크기, 한 칸이 5%
 # 시작 인사. kis_settings.json 의 "greeting" / "greeting_again" 으로 바꾼다 (빈 문자열이면 인사 없음)
 TTS_GREETING = "모니터링을 시작합니다."
 TTS_GREETING_AGAIN = "모니터링을 다시 시작합니다."
+# 미국 장이 있는 날 프리장 시작·정규장 시작·정규장 종료에 읽는 말. kis_settings.json 의 "bells" 로 바꾼다 (빈 문자열이면 그 종은 없음)
+TTS_BELLS = {"pre": "미국 프리장이 시작됐습니다.", "open": "미국 정규장이 시작됐습니다.",
+             "close": "미국 정규장이 끝났습니다."}
 
 CHIME_WAV = r"C:\Windows\Media\Speech On.wav"
 BEEP_TONES = {"short": ((1175, 90),), "full": ((880, 180), (1175, 180), (880, 180))}
