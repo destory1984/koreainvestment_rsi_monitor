@@ -727,6 +727,18 @@ class VoiceTest(unittest.TestCase):
         with wave.open(io.BytesIO(al.louder(buf.getvalue(), 0.3))) as w:
             out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(3)]
         self.assertEqual(out, [300, -300, 9000])                              # 1 밑이면 줄인다
+        # level 을 주면 가장 큰 곳을 거기에 맞춘 뒤 곱한다 — 크게 녹음된 것도 작게 녹음된 것도 같은 크기
+        for peak in (30000, 3000):
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(8000)
+                w.writeframes(b"".join(v.to_bytes(2, "little", signed=True) for v in (peak // 2, -peak)))
+            for gain, want in ((1, 8192), (2, 16384), (8, 32767)):
+                with wave.open(io.BytesIO(al.louder(buf.getvalue(), gain, 0.25))) as w:
+                    out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(2)]
+                self.assertAlmostEqual(-out[1], want, delta=2)
 
     def test_split_parts(self):
         self.assertEqual(al.split_parts("하이닉스 69 초과"), ["하이닉스", "육십구", "초과"])

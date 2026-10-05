@@ -1151,8 +1151,8 @@ def api_tts_engine(edge: bool = Body(..., embed=True)):
 
 @app.post("/api/tts-gain")
 def api_tts_gain(gain: float = Body(..., embed=True)):
-    """목소리만 몇 배로 할지 (0.1~8, 1 밑이면 줄인다). 바로 적용된다."""
-    hub.settings["tts_gain"] = min(8.0, max(0.1, float(gain)))
+    """목소리 크기 (0.1~4 = 10~400%. 1 이 기준 크기, 4 면 녹음이 끝에 닿는다). 바로 적용된다."""
+    hub.settings["tts_gain"] = min(4.0, max(0.1, float(gain)))
     hub.voice.gain = hub.settings["tts_gain"]
     hub.save_settings()
     return {"tts_gain": hub.settings["tts_gain"]}

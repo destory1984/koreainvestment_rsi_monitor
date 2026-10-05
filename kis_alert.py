@@ -46,6 +46,7 @@ TTS_LOCAL_TIMEOUT = 60        # 첫 문장은 모델이 깨느라 오래 걸릴 
 # 여기를 바꾸면 캐시 이름(path)이 바뀌어 그 문장을 다시 녹음한다.
 TTS_LOCAL_EMOTION = ()
 TTS_TRIM_LEVEL = 0.01         # 이보다 작은 소리는 빈 자리로 본다
+TTS_LEVEL = 0.25              # 목소리 크기 100% 일 때 녹음에서 가장 큰 곳 (0~1). 400% 면 끝(1.0)에 닿는다
 TTS_PARTS_GAP = 0.06          # 조각 녹음을 이어 붙일 때 조각 사이 쉼 (초)
 TTS_TRIM_KEEP = 0.06          # 잘라낸 뒤 앞뒤에 남길 초
 TTS_EDGE_VOICE = "ko-KR-SunHiNeural"
@@ -326,9 +327,10 @@ def join_wavs(paths, gap=0.0):
     return out.getvalue()
 
 
-def louder(data, gain):
+def louder(data, gain, level=None):
     """16비트 wav 의 소리를 gain 배로 (1 밑이면 줄인다). 가장 큰 곳이 끝에 닿으면 거기서 멈춘다 (잘려 찌그러지지 않게,
-    큰 문장은 gain 보다 덜 커진다). 못 하겠으면 받은 그대로."""
+    큰 문장은 gain 보다 덜 커진다). level(0~1)을 주면 먼저 가장 큰 곳을 level 에 맞춘 뒤 gain 배 —
+    녹음마다 크기가 달라도 같은 크기로 들린다. 못 하겠으면 받은 그대로."""
     try:
         import numpy as np
         with wave.open(io.BytesIO(data)) as w:
@@ -337,6 +339,8 @@ def louder(data, gain):
             params, frames = w.getparams(), w.readframes(w.getnframes())
         x = np.frombuffer(frames, dtype="<i2").astype(np.float32)
         peak = float(np.abs(x).max()) if x.size else 0.0
+        if peak and level:
+            gain *= level * 32767 / peak
         x *= min(gain, 32767 / peak) if peak else gain
         out = io.BytesIO()
         with wave.open(out, "wb") as w2:
@@ -349,10 +353,11 @@ def louder(data, gain):
 
 def play_wav(path, gain=1.0):
     """wav·mp3 를 끝까지 틀고 돌아온다 (알림은 한 줄로 세워 하나씩 트니 기다려도 된다).
-    gain 이 1 이 아니면 wav 를 그만큼 키운 사본(같은 폴더 _loud.wav)을 튼다. mp3(Edge) 는 그대로."""
-    if gain != 1.0 and str(path).lower().endswith(".wav"):
+    wav 는 가장 큰 곳을 TTS_LEVEL 에 맞추고 gain 배 한 사본(같은 폴더 _loud.wav)을 튼다 — 목소리·녹음마다
+    크기가 달라도 같은 설정이면 같은 크기다. mp3(Edge) 는 그대로."""
+    if str(path).lower().endswith(".wav"):
         loud = Path(path).with_name("_loud.wav")
-        loud.write_bytes(louder(Path(path).read_bytes(), gain))
+        loud.write_bytes(louder(Path(path).read_bytes(), gain, TTS_LEVEL))
         path = loud
     alias = "kistts"
     try:
