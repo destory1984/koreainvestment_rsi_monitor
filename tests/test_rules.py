@@ -724,6 +724,9 @@ class VoiceTest(unittest.TestCase):
         with wave.open(io.BytesIO(al.louder(buf.getvalue(), 1.3))) as w:
             out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(3)]
         self.assertEqual(out, [1092, -1092, 32767])                           # 30000 이 끝에 닿는 1.09배에서 멈춘다
+        with wave.open(io.BytesIO(al.louder(buf.getvalue(), 0.3))) as w:
+            out = [int.from_bytes(w.readframes(1), "little", signed=True) for _ in range(3)]
+        self.assertEqual(out, [300, -300, 9000])                              # 1 밑이면 줄인다
 
     def test_split_parts(self):
         self.assertEqual(al.split_parts("하이닉스 69 초과"), ["하이닉스", "육십구", "초과"])

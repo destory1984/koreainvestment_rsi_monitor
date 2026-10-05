@@ -327,7 +327,7 @@ def join_wavs(paths, gap=0.0):
 
 
 def louder(data, gain):
-    """16비트 wav 의 소리를 gain 배로. 가장 큰 곳이 끝에 닿으면 거기서 멈춘다 (잘려 찌그러지지 않게,
+    """16비트 wav 의 소리를 gain 배로 (1 밑이면 줄인다). 가장 큰 곳이 끝에 닿으면 거기서 멈춘다 (잘려 찌그러지지 않게,
     큰 문장은 gain 보다 덜 커진다). 못 하겠으면 받은 그대로."""
     try:
         import numpy as np
