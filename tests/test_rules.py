@@ -494,6 +494,24 @@ class StoreTest(unittest.TestCase):
         self.assertEqual([b["close"] for b in got], [100, 101, 102, 103])     # 101 은 API 값 그대로
         self.assertTrue(rp.get_night(con, "NAS", "TSLA", 5))
 
+    def bars_with_night(self, have, books=None):
+        """주간거래 봉이 have 칸 맞게 왔을 때 _bars 가 가른 것."""
+        self.h.appkey = self.h.secret = "x"
+        self.h.books = books or {}
+        with mock.patch.object(w.k, "fetch_bars", lambda *a, **kw: bars_from([100, 101])), \
+                mock.patch.object(w.k, "fetch_night", lambda *a, **kw: ([], have, 96)), \
+                mock.patch.object(w, "HISTORY_DAYS", 0):
+            return self.h._bars("NAS", "TSLA")[1]
+
+    def test_no_night_bars_keeps_earlier_judgment(self):
+        book = types.SimpleNamespace(night={"on": True, "auto": True, "have": 90, "of": 96})
+        self.assertEqual(self.bars_with_night(0, {"TSLA": book}), book.night)   # 떠 있던 종목은 앞서 센 대로
+        con = rp.db()
+        self.assertTrue(rp.get_night(con, "NAS", "TSLA", 5))                    # DB 도 뒤집히지 않는다
+        con.close()
+        self.assertTrue(self.bars_with_night(0)["on"])                          # 새로 켰으면 DB 값
+        self.assertFalse(self.bars_with_night(10)["on"])                        # 몇 칸이라도 왔으면 센 대로
+
     def test_store_failure_does_not_raise(self):
         with mock.patch.object(rp, "db", side_effect=sqlite3.OperationalError("database is locked")), \
                 mock.patch("builtins.print") as out:

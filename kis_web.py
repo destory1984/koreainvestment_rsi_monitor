@@ -183,11 +183,30 @@ class Hub:
             return self._history(excd, symb, bars, False) + bars, None
         day, have, of = k.fetch_night(self.appkey, self.secret, excd, symb, nmin)
         auto = have > of * k.NIGHT_SHARE
+        if not have:
+            # 한 칸도 안 맞으면 가를 것이 없다 — 못 받았거나, 다음 세션을 앞두고 지난 세션 봉을 더는 주지 않을 때다
+            # (10-09 뉴욕 19:20 에 13종목이 모두 0칸). 앞서 가른 대로 둔다: 떠 있던 종목은 그 값, 새로 켰으면 DB 값
+            old = getattr(getattr(self, "books", {}).get(symb), "night", None)
+            if old:
+                auto, have, of = old["auto"], old["have"], old["of"]
+            else:
+                auto = self._night_before(excd, symb, nmin)
         on = self.settings.get("night", {}).get(symb, auto)
         # 받은 것은 되감기 DB 에도 쌓는다 (마지막 봉은 아직 진행 중이라 뺀다). 주간거래 봉은 정규 쪽 봉을 덮지 않는다
         self.store([(excd, symb, bars[:-1], True), (excd, symb, day[:-1], False)], night=(excd, symb, on))
         bars = k.merge_bars(bars, day) if on else bars
         return self._history(excd, symb, bars, on) + bars, {"on": on, "auto": auto, "have": have, "of": of}
+
+    def _night_before(self, excd, symb, nmin):
+        """DB 에 남은, 앞서 오버나이트 봉을 넣기로 했는지 (블로킹). 못 읽으면 안 넣는다."""
+        try:
+            con = rp.db()
+            try:
+                return rp.get_night(con, excd, symb, nmin)
+            finally:
+                con.close()
+        except Exception:
+            return False
 
     def _history(self, excd, symb, bars, night_on):
         """DB 에 쌓인, 받은 봉보다 앞선 봉들 (블로킹). 최근 HISTORY_DAYS 날짜만. 차트를 며칠 뒤까지 보고
